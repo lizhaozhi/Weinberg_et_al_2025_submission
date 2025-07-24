@@ -1,0 +1,488 @@
+---
+title: "Pseudobulk Modeling for Basal Samples"
+author: "Harvard Chan Bioinformatics Core"
+date: "`r Sys.Date()`"
+output:
+   html_document:
+      code_folding: hide
+      df_print: paged
+      highlights: pygments
+      number_sections: false
+      self_contained: true
+      theme: default
+      toc: true
+      toc_float:
+         collapsed: true
+         smooth_scroll: true
+editor_options: 
+  chunk_output_type: console
+params:
+  project_file: information.R
+  seurat_qs_fn: ../data_processed/DtST.qs
+  meta_fn: ../meta/20240729_metadata_sc.xlsx
+  scrna_meta_fn: ../results/scrna_meta_basal.csv
+  counts_csf_fn: ../results/pseudobulk_counts_vst_basal_CSF.csv
+  coldata_csf_fn: ../results/pseudobulk_coldata_basal_CSF.csv
+  res_csf_fn: ../results/DE_all_genes_basal_CSF.csv
+---
+
+```{r load_params, echo = F}
+source(params$project_file)
+```
+
+```{r load_libraries, cache = FALSE, message = FALSE, warning=FALSE, echo=FALSE}
+
+current_libs <- .libPaths()
+.libPaths(c('/n/app/bcbio/R4.3.1_singlecell/', current_libs))
+library(qs)
+# library(knitr)
+library(tidyverse)
+library(Seurat)
+library(DESeq2)
+library(DEGreport)
+library(bcbioR)
+library(ggprism)
+library(patchwork)
+library(ggpubr)
+library(UpSetR)
+library(pheatmap)
+# library(BiocParallel)
+# register(MulticoreParam(8))
+
+options(stringsAsFactors = FALSE)
+
+colors=cb_friendly_cols(1:15)
+ggplot2::theme_set(theme_prism(base_size = 14))
+knitr::opts_chunk[["set"]](
+    cache = F,
+    cache.lazy = FALSE,
+    dev = c("png", "pdf"),
+    error = TRUE,
+    highlight = TRUE,
+    message = FALSE,
+    prompt = FALSE,
+    tidy = FALSE,
+    warning = FALSE,
+    echo = T, 
+    fig.height = 4)
+
+# set seed for reproducibility
+set.seed(1234567890L)
+
+```
+
+```{r sanitize_datatable}
+sanitize_datatable = function(df, ...) {
+ # remove dashes which cause wrapping
+ DT::datatable(df, ..., rownames=gsub("-", "_", rownames(df)),
+                   colnames=gsub("-", "_", colnames(df)),
+               filter = 'top')
+}
+```
+
+# Overview
+
+-   Project: `r project`
+-   PI: `r PI`
+-   Analyst: `r analyst`
+-   Experiment: `r experiment`
+-   Aim: `r aim`
+
+# Objective
+
+Examine changes in gene expression across cell type (L1 annotation level), time (0, 3, 12 months) and disease state (Healthy, AD). Other covariates were found to be minimally significant (see weinberg_pseudobulk_PCA_basal_hbc04803.html), so they are excluded here. 
+
+We use a model where donor is nested inside of disease, as described in the "Model matrix not full rank" section of the [DESeq2 manual](https://www.bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#model-matrix-not-full-rank)
+
+# Cell Counts for Pseudobulking
+
+The psueudobulk samples are cell type x donor x time, and we can see that most of those pseudobulk samples will be composed of at least 30 cells. For those pseudobulk samples composed of fewer cells, statistical results may be less reliable. 
+
+```{r load data, eval = !file.exists(params$counts_csf_fn)}
+
+scrna <- qread('../data_processed/DtST.qs')
+
+scrna_meta <- scrna@meta.data
+# meta_for_missingness <- scrna_meta %>% dplyr::select(donor, tissue, treatment, time) %>%
+#   mutate(condition = ifelse(donor %in% c('242_003', '242_010', '242_014', '2577_010', 'LS1089'), 'stim', 'basal')) %>%
+#   mutate(time = factor(time, levels = c(0,3,12))) %>% distinct()
+# 
+# ggplot(meta_for_missingness %>% filter(condition == 'basal'), aes(x = time, y = donor)) + 
+#   facet_wrap(~ tissue) + geom_point() + ggtitle('basal samples')
+
+scrna_basal <- subset(scrna, 
+                  cells = colnames(scrna)[which(!(scrna$donor %in% c('242_003', '242_010', '242_014', '2577_010', 'LS1089')))])
+
+meta <- readxl::read_xlsx(params$meta_fn) 
+scrna_basal_meta <- scrna_basal@meta.data %>% as.data.frame() %>%
+  left_join(meta %>% mutate(donor = gsub('-', '_', subject),
+                            disease = ifelse(km_ptau181_div_ab42, 'AD', 'Healthy')) %>% select(donor, disease) %>% distinct())
+write_csv(scrna_basal_meta, params$scrna_meta_fn)
+
+ribo_genes <- grep(rownames(scrna_basal), pattern="^RPS|^RPL")
+scrna_basal <- scrna_basal[-ribo_genes,]
+
+rownames(scrna_basal_meta) <- rownames(scrna_basal@meta.data)
+scrna_basal@meta.data <- scrna_basal_meta
+
+scrna_basal$cdt <- factor(paste(scrna_basal$predicted.celltype.l1, scrna_basal$donor, scrna_basal$time, 
+                                sep = "_"))
+
+```
+
+```{r plot cell numbers l1, fig.height = 4, fig.width = 10}
+scrna_basal_meta <- read_csv(params$scrna_meta_fn)
+
+cell_type_counts <- scrna_basal_meta %>% group_by(tissue, predicted.celltype.l1, donor, time, disease) %>%
+  summarize(n = n()) %>%
+  mutate(time = factor(time, levels = c(0,3,12)))
+
+ggplot(cell_type_counts, aes(x = predicted.celltype.l1, y = n, fill = disease)) + 
+  geom_boxplot() + geom_hline(yintercept = 30, linetype = 2) +
+  facet_grid(tissue~time) + scale_fill_cb_friendly() + scale_y_log10() +
+  scale_x_discrete(guide = guide_axis(angle = 45))
+```
+
+```{r plot cell numbers l2, fig.height = 6, fig.width = 10}
+cell_type_counts_l2 <- scrna_basal_meta %>% group_by(tissue, predicted.celltype.l2, donor, time, disease) %>% 
+  summarize(n = n()) %>%
+  mutate(time = factor(time, levels = c(0,3,12)))
+
+ggplot(cell_type_counts_l2, aes(x = predicted.celltype.l2, y = n, fill = disease)) + 
+  geom_boxplot() + geom_hline(yintercept = 30, linetype = 2) +
+  facet_wrap(~tissue, nrow = 2) + scale_fill_cb_friendly() + scale_y_log10() +
+  scale_x_discrete(guide = guide_axis(angle = 45))
+
+```
+
+# CSF
+
+## Sample Clustering
+
+We know from the plots in the Pseudobulk PCA Analysis report that the pseudobulked samples cluster mostly by cell type. After subsetting by cell type, some clustering by donor or disease is observed, but not much. 
+
+```{r subset csf, eval = !file.exists(params$counts_csf_fn)}
+csf <-subset(scrna_basal, cells=colnames(scrna_basal)[which(scrna_basal$tissue == "csf" )])
+
+```
+
+```{r aggregate counts csf, eval = !file.exists(params$counts_csf_fn)}
+
+agg_counts_csf_seurat <- AggregateExpression(csf, return.seurat = T, slot = "counts", 
+                                      assays = "RNA", group.by = "cdt")
+
+agg_counts_csf <- FetchData(agg_counts_csf_seurat, layer = "counts", vars = rownames(agg_counts_csf_seurat)) %>% t()
+
+colnames(agg_counts_csf) <- sapply(colnames(agg_counts_csf), function(x) gsub('-', '_', x)) %>% as.character()
+
+csf_meta <- csf@meta.data %>% as.data.frame()
+
+coldata_csf <- csf@meta.data %>% as.data.frame() %>% 
+  dplyr::select(disease, donor, time, predicted.celltype.l1, cdt) %>%
+  distinct() %>%
+  mutate(time = factor(time, levels = c(0, 3, 12)),
+         disease = factor(disease, levels = c('Healthy', 'AD')))
+
+donor_pseudoids <- coldata_csf %>% select(disease, donor) %>%
+  distinct() %>%
+  group_by(disease) %>%
+  mutate(id = row_number()) %>%
+  mutate(id = factor(id)) %>% ungroup() %>%
+  select(-disease)
+
+coldata_csf <- left_join(coldata_csf, donor_pseudoids) %>%
+  mutate(id = factor(id))
+
+# coldata_csf$dtc <- sapply(coldata_csf$dtc, function(x) gsub('-', '_', x))
+rownames(coldata_csf) <- coldata_csf$cdt
+coldata_csf <- coldata_csf[colnames(agg_counts_csf), ]
+stopifnot(all(rownames(coldata_csf) == colnames(agg_counts_csf)))
+
+dds_csf <- DESeqDataSetFromMatrix(agg_counts_csf,
+                                  colData = coldata_csf,
+                                  design = ~1)
+dds_csf <- DESeq(dds_csf)
+  
+vst_csf <- vst(dds_csf)
+
+vst_csf_df <- assay(vst_csf) %>% as.data.frame()
+rownames(vst_csf_df) <- rownames(agg_counts_csf)
+
+write_csv(vst_csf_df %>% rownames_to_column('gene_name'), params$counts_csf_fn)
+write_csv(coldata_csf, params$coldata_csf_fn)
+
+```
+
+
+```{r load agg counts csf}
+
+vst_csf_df <- read_csv(params$counts_csf_fn) %>% column_to_rownames('gene_name')
+coldata_csf <- read_csv(params$coldata_csf_fn) 
+rownames(coldata_csf) <- coldata_csf$cdt
+
+```
+
+```{r clustering csf, fig.height = 5}
+vst_cor <- cor(as.matrix(vst_csf_df))
+
+colma=coldata_csf %>% as.data.frame() %>% mutate(time = factor(time, levels = c(0, 3, 12)))
+rownames(colma) <- colma$cdt
+colma <- colma[rownames(vst_cor), ]
+colma <- colma %>% dplyr::select(predicted.celltype.l1, disease, time)
+anno_colors=lapply(colnames(colma), function(c){
+  l.col=cb_friendly_pal('main')(length(unique(colma[[c]])))
+  names(l.col)=unique(colma[[c]])
+  l.col
+})
+names(anno_colors)=colnames(colma)
+
+p <- pheatmap(vst_cor,
+         annotation = colma,
+         annotation_colors = anno_colors,
+         show_rownames = F,
+         show_colnames = F,
+         color = cb_friendly_pal('heatmap')(15)
+         )
+p
+
+```
+
+### Per cell type {.tabset}
+
+```{r clustering cell type csf, results = 'asis', fig.height = 6, fig.width = 10}
+
+for (cell_type in sort(unique(coldata_csf$predicted.celltype.l1))){
+  
+  cat("#### ", cell_type, "\n")
+  
+  coldata_csf_cell_type <- coldata_csf %>% filter(predicted.celltype.l1 == cell_type) %>% as.matrix()
+  vst_csf_cell_type <- vst_csf_df[, rownames(coldata_csf_cell_type)] %>% as.matrix()
+  stopifnot(all(rownames(coldata_csf_cell_type) == colnames(vst_csf_cell_type)))
+  
+  p1 <- degPCA(vst_csf_cell_type, coldata_csf_cell_type, 
+               condition = 'donor', shape = 'time')
+  
+  p2 <- degPCA(vst_csf_cell_type, coldata_csf_cell_type, 
+               condition = 'donor', shape = 'disease')
+  
+  p3 <- ggarrange(p1, p2)
+  print(p3)
+  
+  cat('\n\n')
+}
+
+```
+
+## DE Genes 
+
+We use a model that accounts for `donor`, `disease`, and `time`. We also subset the data by cell type and run one model per cell type since, as shown in the Pseudobulk PCA Analysis report, variance between samples depends heavily on cell type. 
+
+```{r subset csf by cell type, results = 'asis', fig.height = 8, eval = !file.exists(params$res_csf_fn)}
+
+for (cell_type in sort(unique(coldata_csf$predicted.celltype.l1))){
+  
+  cat("## ", cell_type, "\n")
+  
+  # prepare inputs for model
+  coldata_csf_cell_type <- coldata_csf %>% filter(predicted.celltype.l1 == cell_type) %>%
+    mutate(id = factor(id),
+           disease = factor(disease, levels = c('Healthy', 'AD')),
+           time = factor(time, levels = c(0, 3, 12)))
+  rownames(coldata_csf_cell_type) <- coldata_csf_cell_type$cdt
+  agg_counts_csf_cell_type <- agg_counts_csf[, rownames(coldata_csf_cell_type)]
+  
+  design_matrix <- model.matrix(~ disease + disease:id + disease:time, coldata_csf_cell_type)
+  all.zero <- apply(design_matrix, 2, function(x) all(x == 0))
+  idx <- which(all.zero)
+  if(length(idx > 0)){
+    design_matrix <- design_matrix[,-idx]
+  }
+
+  # fit full model, pull contrasts
+  dds_csf_cell_type_dummy <- DESeqDataSetFromMatrix(agg_counts_csf_cell_type,
+                                  colData = coldata_csf_cell_type,
+                                  design = design_matrix)
+  dds_csf_cell_type_dummy <- DESeq(dds_csf_cell_type_dummy)
+  
+  vst_csf_cell_type_dummy <- varianceStabilizingTransformation(dds_csf_cell_type_dummy)
+  
+  res_diseaseAD.time3 <- lfcShrink(dds_csf_cell_type_dummy, coef = 'diseaseAD.time3') %>% 
+    as.data.frame() %>%
+    mutate(coefficient = 'diseaseAD.time3') %>%
+    rownames_to_column('gene_name')
+  
+  res_diseaseAD.time12 <- lfcShrink(dds_csf_cell_type_dummy, coef = 'diseaseAD.time12') %>% 
+    as.data.frame() %>%
+    mutate(coefficient = 'diseaseAD.time12') %>%
+    rownames_to_column('gene_name')
+  
+  res_diseaseHealthy.time3 <- lfcShrink(dds_csf_cell_type_dummy, coef = 'diseaseHealthy.time3') %>% 
+    as.data.frame() %>%
+    mutate(coefficient = 'diseaseHealthy.time3') %>%
+    rownames_to_column('gene_name')
+  
+  res_diseaseHealthy.time12 <- lfcShrink(dds_csf_cell_type_dummy, coef = 'diseaseHealthy.time12') %>% 
+    as.data.frame() %>%
+    mutate(coefficient = 'diseaseHealthy.time12') %>%
+    rownames_to_column('gene_name')
+  
+  res_diseaseAD <- lfcShrink(dds_csf_cell_type_dummy, coef = 'diseaseAD', type = 'ashr') %>% 
+    as.data.frame() %>%
+    mutate(coefficient = 'diseaseAD') %>%
+    rownames_to_column('gene_name')
+
+  res_diseaseHealthy.time3_diseaseAD.time3 <- lfcShrink(dds_csf_cell_type_dummy, type = 'ashr', 
+                                                        contrast = list(c("diseaseHealthy.time3", "diseaseAD.time3"))) %>% 
+    as.data.frame() %>%
+    mutate(coefficient = 'diseaseHealthy.time3_diseaseAD.time3') %>%
+    rownames_to_column('gene_name')
+  
+  res_diseaseHealthy.time12_diseaseAD.time12 <- lfcShrink(dds_csf_cell_type_dummy, type = 'ashr', 
+                                                        contrast = list(c("diseaseHealthy.time12", "diseaseAD.time12"))) %>% 
+    as.data.frame() %>%
+    mutate(coefficient = 'diseaseHealthy.time12_diseaseAD.time12') %>%
+    rownames_to_column('gene_name')
+  
+  # LRT to find sig genes in interaction
+  reduced_design <- model.matrix(~ disease + disease:id, data = colData(dds_csf_cell_type_dummy))
+  all.zero <- apply(reduced_design, 2, function(x) all(x==0))
+  idx <- which(all.zero)
+  reduced_design <- reduced_design[,-idx]
+  
+  dds_LRT <- DESeq(dds_csf_cell_type_dummy, test = "LRT", full = design(dds_csf_cell_type_dummy), reduced = reduced_design)
+  res_disease_x_time <- results(dds_LRT) %>% as.data.frame() %>%
+    mutate(coefficient = 'disease_x_time') %>%
+    rownames_to_column('gene_name') %>% dplyr::select(-stat)
+
+  # combine results
+  res_all <- rbind(res_diseaseAD.time3,
+                   res_diseaseAD.time12,
+                   res_diseaseHealthy.time3,
+                   res_diseaseHealthy.time12,
+                   res_diseaseAD,
+                   res_diseaseHealthy.time3_diseaseAD.time3,
+                   res_diseaseHealthy.time12_diseaseAD.time12,
+                   res_disease_x_time
+                   ) %>%
+    mutate(celltype = cell_type)
+
+  write_csv(res_all, paste0('../results/DE_all_genes_basal_CSF_', gsub(' ', '', cell_type), '.csv'))
+
+
+  cat('\n\n')
+
+}
+
+```
+
+```{r combine results csf, eval = !file.exists(params$res_csf_fn)}
+files <- list.files('../results/', pattern = '*.csv')
+files <- files[grepl('CSF', files) & grepl('DE', files) & grepl('basal', files)]
+
+res <- lapply(files, function(x) read_csv(paste0('../results/', x))) %>% bind_rows()
+write_csv(res, params$res_csf_fn)
+```
+
+```{r load results csf}
+res <- read_csv(params$res_csf_fn)
+
+res_sig <- res %>% filter(padj < 0.05) %>% arrange(padj)
+
+```
+
+### Overview
+
+Most differential gene expression is observed in the comparison of AD vs Healthy at time 0, and in Monocytes, T cells, and DCs. 
+
+Very few differentially expressed genes are observed between disease states at individual timepoints or as a result of the interaction between disease state and timepoint. 
+
+An explanation of the interpretation of the various coefficients is as follows:
+
+- `disease_x_time`: genes that change differently over time between the two disease states
+- `diseaseAD`: genes that change in AD at time 0 as compared to Healthy at time 0
+- `diseaseAD_time12`: genes that change in AD at time 12 as compared to AD at time 0
+- `diseaseAD_time3`: genes that change in AD at time 3 as compared to AD at time 0
+- `diseaseHealthy.time12`: genes that change in Healthy at time 12 as compared to Healthy at time 0
+- `diseaseHealthy.time12_diseaseADtime12`: genes that change in AD at time 12 as compared to Healthy at time 12
+- `diseaseHealthy.time3`: genes that change in Healthy at time 3 as compared to Healthy at time 0
+- `diseaseHealthy.time3_diseaseADtime3`: genes that change in AD at time 3 as compared to Healthy at time 3
+
+```{r summary bar csf, fig.width = 10}
+
+ggplot(res_sig, aes(x = celltype, fill = coefficient)) + geom_bar() + ylab('n DEGs') +
+  scale_fill_cb_friendly()
+
+ggplot(res_sig %>% filter(coefficient != 'diseaseAD'), 
+       aes(x = celltype, fill = coefficient)) + geom_bar() + ylab('n DEGs') +
+  scale_fill_cb_friendly() + ggtitle('Without diseaseAD') 
+```
+
+### Table of all DEGs
+```{r de table csf}
+res_sig %>% sanitize_datatable()
+```
+
+### Per cell type {.tabset}
+
+```{r display results per cell type csf, results = 'asis', fig.height = 6, fig.width = 8}
+
+for (cell_type in sort(unique(res_sig$celltype))){
+  
+
+  res_sig_cell_type <- res_sig %>% filter(celltype == cell_type)
+  
+  if(nrow(res_sig_cell_type) > 1){
+    cat("#### ", cell_type, "\n") 
+  
+    de_list <- lapply(unique(res_sig_cell_type$coefficient), 
+                      function(x) res_sig_cell_type %>% filter(coefficient == x) %>% pull(gene_name))
+    names(de_list) <- unique(res_sig_cell_type$coefficient)
+    p <- upset(fromList(de_list), order.by = "freq", nsets=length(de_list), nintersects = 15)
+    print(p)
+    
+    cat('\n\n')
+  }
+
+}
+```
+
+### Per coefficient {.tabset}
+
+```{r display results per coefficient csf, results = 'asis', fig.height = 5}
+
+for (comp in sort(unique(res_sig$coefficient))){
+  
+
+  res_sig_comp <- res_sig %>% filter(coefficient == comp)
+  
+  if(nrow(res_sig_comp) > 1){
+    cat("#### ", comp, "\n") 
+  
+    de_list <- lapply(sort(unique(res_sig_comp$celltype)), 
+                      function(x) res_sig_comp %>% filter(celltype == x) %>% pull(gene_name))
+    names(de_list) <- sort(unique(res_sig_comp$celltype))
+    p <- upset(fromList(de_list), order.by = "freq", nsets=length(de_list), nintersects = 15)
+    print(p)
+    
+    cat('\n\n')
+  }
+
+}
+```
+
+# Conclusions
+
+Most differentially expressed genes are observed in the comparison of AD vs Healthy at timepoint 0.
+Specifically, these DEGs are mainly observed in cell types with the greatest cell 
+numbers per pseudobulked sample (CD4 T, CD8 T, DC, and Monocytes).
+
+Very few genes are observed to be differentially expressed as a result of the effect of time on each disease state individually. There are also very few genes observed to be differentially expressed cross-sectionally between the disease states at individual timepoints.  
+
+
+# R session
+
+List and version of tools used for the report generation.
+
+```{r}
+sessionInfo()
+```

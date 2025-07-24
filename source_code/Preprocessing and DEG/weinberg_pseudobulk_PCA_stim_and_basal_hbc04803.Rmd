@@ -1,0 +1,321 @@
+---
+title: "Pseudobulk PCA Analysis with Unstim"
+author: "Harvard Chan Bioinformatics Core"
+date: "`r Sys.Date()`"
+output:
+   html_document:
+      code_folding: hide
+      df_print: paged
+      highlights: pygments
+      number_sections: false
+      self_contained: true
+      theme: default
+      toc: true
+      toc_float:
+         collapsed: true
+         smooth_scroll: true
+editor_options: 
+  chunk_output_type: console
+params:
+  project_file: information.R
+  seurat_qs_fn: ../data_processed/DtST.qs
+  meta_fn: ../meta/20240729_metadata_sc.xlsx
+---
+
+```{r load_params, echo = F}
+source(params$project_file)
+```
+
+```{r load_libraries, cache = FALSE, message = FALSE, warning=FALSE, echo=FALSE,}
+
+current_libs <- .libPaths()
+.libPaths(c('/n/app/bcbio/R4.3.1_singlecell/', current_libs))
+library(qs)
+library(tidyverse)
+library(Seurat)
+# library(Matrix)
+# library(DESeq2)
+library(DEGreport)
+library(bcbioR)
+library(ggprism)
+library(knitr)
+library(patchwork)
+library(ggpubr)
+# library(BiocParallel)
+# register(MulticoreParam(8))
+
+options(stringsAsFactors = FALSE)
+
+colors=cb_friendly_cols(1:15)
+ggplot2::theme_set(theme_prism(base_size = 14))
+opts_chunk[["set"]](
+    cache = F,
+    cache.lazy = FALSE,
+    dev = c("png", "pdf"),
+    error = TRUE,
+    highlight = TRUE,
+    message = FALSE,
+    prompt = FALSE,
+    tidy = FALSE,
+    warning = FALSE,
+    echo = T, 
+    fig.height = 4)
+
+# set seed for reproducibility
+set.seed(1234567890L)
+
+```
+
+```{r sanitize_datatable}
+sanitize_datatable = function(df, ...) {
+ # remove dashes which cause wrapping
+ DT::datatable(df, ..., rownames=gsub("-", "_", rownames(df)),
+                   colnames=gsub("-", "_", colnames(df)),
+               filter = 'top')
+}
+```
+
+# Overview
+
+-   Project: `r project`
+-   PI: `r PI`
+-   Analyst: `r analyst`
+-   Experiment: `r experiment`
+-   Aim: `r aim`
+
+```{r load data}
+
+scrna <- qread('../data_processed/DtST.qs')
+scrna_meta <- scrna@meta.data %>% as.data.frame()
+
+ribo_genes <- grep(rownames(scrna), pattern="^RPS|^RPL")
+scrna <- scrna[-ribo_genes,]
+
+scrna$treatment_subtype <- ifelse(scrna$treatment == 'Ctrl' & scrna$tissue == 'csf',
+                                  ifelse(scrna$donor %in% c('242_003', '242_010', '242_014', '2577_010', 'LS1089'),
+                                         'Ctrl',
+                                         'Unstim'
+                                         ),
+                                  as.character(scrna$treatment))
+
+scrna$tdtc <- factor(paste(scrna$treatment_subtype, scrna$donor, scrna$time, scrna$predicted.celltype.l1, sep = "_"))
+
+meta <- readxl::read_xlsx(params$meta_fn) 
+
+```
+
+# Objective
+
+Determine which covariates to include in differential expression modeling and how best to use them. 
+
+
+# PBMC
+
+```{r subset pbmc}
+pbmc <-subset(scrna, cells=colnames(scrna)[which(scrna$tissue == "pbmc" )])
+
+```
+
+```{r aggregate counts pbmc}
+
+agg_counts_pbmc <- AggregateExpression(pbmc, assays = "RNA", group.by = c("tdtc"))
+
+agg_counts_pbmc <- agg_counts_pbmc$RNA
+colnames(agg_counts_pbmc) <- sapply(colnames(agg_counts_pbmc), function(x) gsub('-', '_', x)) %>% as.character()
+
+pbmc_meta <- pbmc@meta.data %>% as.data.frame()
+
+coldata_pbmc <- pbmc@meta.data %>% as.data.frame() %>% 
+  dplyr::select(donor, time, treatment, predicted.celltype.l1, tdtc) %>%
+  distinct() %>%
+  mutate(tdt = paste(treatment, donor, time, sep ='_')) %>%
+  left_join(meta %>% mutate(donor = gsub('-', '_', subject),
+                            sex1m = as.factor(sex1m), 
+                            apoe4_carrier = as.factor(apoe4_carrier)) %>% 
+              select(donor, age, apoe4_carrier, sex1m) %>% distinct())
+
+coldata_pbmc$tdtc <- sapply(coldata_pbmc$tdtc, function(x) gsub('-', '_', x))
+rownames(coldata_pbmc) <- coldata_pbmc$tdtc
+coldata_pbmc <- coldata_pbmc[colnames(agg_counts_pbmc), ]
+stopifnot(all(rownames(coldata_pbmc) == colnames(agg_counts_pbmc)))
+
+```
+
+
+## PCA
+
+As shown in the plots, the largest cause of variability between the psuedobulked samples is cell type, followed by donor. The variability due to timepoint or treatment is minimal in comparison. Since the timepoint and treatment variabilities are the variabilities in which we are most scientifically interested, we must include all these factors (cell type, donor, treatment, and timepoint) in the model. 
+
+### All
+
+```{r pca all pbmc}
+
+degPCA(as.matrix(agg_counts_pbmc), coldata_pbmc, condition = 'predicted.celltype.l1', shape = 'donor')
+degPCA(as.matrix(agg_counts_pbmc), coldata_pbmc, condition = 'donor', shape = 'time')
+degPCA(as.matrix(agg_counts_pbmc), coldata_pbmc, condition = 'treatment', shape = 'time')
+
+```
+
+### Without CD4 and Mono
+
+```{r minus cd4 mono pbmc}
+
+agg_counts_pbmc_sub <- agg_counts_pbmc[, !grepl('CD4', colnames(agg_counts_pbmc)) & !grepl('Mono', colnames(agg_counts_pbmc))]
+coldata_pbmc_sub <- coldata_pbmc %>% filter(!grepl('CD4', tdtc) & !grepl('Mono', tdtc))
+
+degPCA(as.matrix(agg_counts_pbmc_sub), coldata_pbmc_sub, condition = 'predicted.celltype.l1', shape = 'donor')
+degPCA(as.matrix(agg_counts_pbmc_sub), coldata_pbmc_sub, condition = 'donor', shape = 'time')
+degPCA(as.matrix(agg_counts_pbmc_sub), coldata_pbmc_sub, condition = 'treatment', shape = 'time')
+
+```
+
+### By Cell Type {.tabset}
+
+```{r cell type pbmc, results = 'asis', fig.height = 8}
+
+for (cell_type in unique(coldata_pbmc$predicted.celltype.l1)){
+  
+  cat("#### ", cell_type, "\n")
+
+  coldata_pbmc_cell_type <- coldata_pbmc %>% filter(predicted.celltype.l1 == cell_type)
+  agg_counts_pbmc_cell_type <- agg_counts_pbmc[, rownames(coldata_pbmc_cell_type)]
+  
+  p1 <- degPCA(as.matrix(agg_counts_pbmc_cell_type), coldata_pbmc_cell_type, condition = 'donor', shape = 'time')
+  p2 <- degPCA(as.matrix(agg_counts_pbmc_cell_type), coldata_pbmc_cell_type, condition = 'treatment', shape = 'time')
+  
+  p <- wrap_plots(p1, p2, nrow = 2)
+  print(p)
+  
+  cat('\n\n')
+}
+
+```
+
+## Evaluate Other Covariates
+
+For this plot, if the point is outlined, the correlation between that variable and PC has a FDR < 0.05. A point being colored means that its correlation is significant even when considered among other covariates with outlined points for that PC. 
+
+In this case, we can see age, sex, donor, and celltype all correlate significantly with PC1 and celltype also correlates significantly with PC2, but after all significant covariates are considered in a model together, only celltype has a significant correlation. This leads us to conclude that we can disregard age and sex in our eventual differential expression model. Note that with only 3 donors and as shown in the heatmap, age and sex are heavily correlated with donor, inflating each variable's correlations with PC1 and causing difficulty modeling age and sex even if they were overall significant covariates. 
+
+
+```{r covariates pbmc}
+p <- degCovariates(as.matrix(agg_counts_pbmc), coldata_pbmc, plot = F)
+
+p$plot
+
+ggarrange(plotlist = p$scatterPlot, nrow = 2, ncol = 2)
+```
+
+```{r covariates cor pbmc}
+degCorCov(coldata_pbmc)
+```
+
+# CSF
+
+```{r subset csf}
+csf <-subset(scrna, cells=colnames(scrna)[which(scrna$tissue == "csf" )])
+
+```
+
+```{r aggregate counts csf}
+
+agg_counts_csf <- AggregateExpression(csf, assays = "RNA", group.by = c("tdtc"))
+
+agg_counts_csf <- agg_counts_csf$RNA
+colnames(agg_counts_csf) <- sapply(colnames(agg_counts_csf), function(x) gsub('-', '_', x)) %>% as.character()
+
+csf_meta <- csf@meta.data %>% as.data.frame()
+
+coldata_csf <- csf@meta.data %>% as.data.frame() %>% 
+  dplyr::select(donor, time, treatment_subtype, predicted.celltype.l1, tdtc) %>%
+  distinct() %>%
+  mutate(tdt = paste(treatment_subtype, donor, time, sep ='_')) %>%
+  left_join(meta %>% mutate(donor = gsub('-', '_', subject),
+                            sex1m = as.factor(sex1m), 
+                            apoe4_carrier = as.factor(apoe4_carrier)) %>% 
+              select(donor, age, apoe4_carrier, sex1m) %>% distinct())
+
+coldata_csf$tdtc <- sapply(coldata_csf$tdtc, function(x) gsub('-', '_', x))
+rownames(coldata_csf) <- coldata_csf$tdtc
+coldata_csf <- coldata_csf[colnames(agg_counts_csf), ]
+stopifnot(all(rownames(coldata_csf) == colnames(agg_counts_csf)))
+
+```
+
+
+## PCA
+
+As observed in the PBMC samples, the largest cause of variability between the psuedobulked samples is cell type. Unlike the PBMC samples, treatment shows approximately as much effect on variability as donor.  
+
+### All
+
+```{r pca all csf}
+
+degPCA(as.matrix(agg_counts_csf), coldata_csf, condition = 'predicted.celltype.l1')
+
+```
+
+### Without CD4 and Mono
+
+```{r minus cd4 mono csf}
+
+agg_counts_csf_sub <- agg_counts_csf[, !grepl('CD4', colnames(agg_counts_csf)) & !grepl('Mono', colnames(agg_counts_csf))]
+coldata_csf_sub <- coldata_csf %>% filter(!grepl('CD4', tdtc) & !grepl('Mono', tdtc))
+
+degPCA(as.matrix(agg_counts_csf_sub), coldata_csf_sub, condition = 'predicted.celltype.l1')
+
+```
+
+### By Cell Type {.tabset}
+
+```{r cell type csf, results = 'asis', fig.height = 8}
+
+for (cell_type in unique(coldata_csf$predicted.celltype.l1)){
+  
+  cat("#### ", cell_type, "\n")
+
+  coldata_csf_cell_type <- coldata_csf %>% filter(predicted.celltype.l1 == cell_type)
+  agg_counts_csf_cell_type <- agg_counts_csf[, rownames(coldata_csf_cell_type)]
+  
+  p1 <- degPCA(as.matrix(agg_counts_csf_cell_type), coldata_csf_cell_type, condition = 'donor', shape = 'time')
+  p2 <- degPCA(as.matrix(agg_counts_csf_cell_type), coldata_csf_cell_type, condition = 'treatment_subtype', shape = 'time')
+  
+  p <- wrap_plots(p1, p2, nrow = 2)
+  print(p)
+  
+  cat('\n\n')
+}
+
+```
+
+## Evaluate Other Covariates
+
+For this plot, if the point is outlined, the correlation between that variable and PC has a FDR < 0.05. A point being colored means that its correlation is significant even when considered among other covariates with outlined points for that PC. 
+
+In this case, we can see that both treatment and cell type are individually significantly correlated with PC1, but only cell type remains significantly correlated with PC1 when treatment is also modeled.  In the heatmap, we see the benefits of having more donors--in this case, that the covariates aren't so strongly correlated with each other. Again, we can reasonably exclude age, sex, and apoe3 status from the eventual differential expression model. 
+
+
+```{r covariates csf}
+
+coldata_csf_complete <- coldata_csf %>% drop_na()
+agg_counts_csf_complete <- agg_counts_csf[, rownames(coldata_csf_complete)]
+p <- degCovariates(as.matrix(agg_counts_csf_complete), coldata_csf_complete, plot = F)
+
+p$plot
+
+ggarrange(plotlist = p$scatterPlot, nrow = 2)
+```
+
+
+```{r covariates cor csf}
+degCorCov(coldata_csf)
+```
+
+# Conclusions
+
+These plots help us determine what factors should be considered in an eventual differential expression model. Since we are interested in the effect of treatment and time on gene expression, we obviously must include these factors. In some cell types in CSF samples, we see a difference between true control samples and unstimulated samples, so we will proceed using this distinction in treatment. 
+
+Additionally, we see that cell type and donor also heavily influence the variability of the pseudobulked samples. More specifically, since the amount of variance between samples heavily depends on cell type (e.g. CD4 T cell pseudobulk samples are considerably more variable than NK pseudobulk samples), best practice is to subset the samples by cell type and fit one model per cell type. Since the amount of variance between samples does not heavily depend on donor (e.g. pseudobulked samples from donor 242_003 are not considerably more variable than pseudobulked samples from donor 242_010), it is acceptable to merely include donor as a factor in the model rather than fit one model per donor. 
+
+Finally, we examine additional metadata factors such as age, apoe3 status, and sex, and find that they account for a vanishingly small proportion of the differences between samples, meaning that they can be reasonably excluded from the model. 
+

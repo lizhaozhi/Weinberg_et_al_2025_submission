@@ -1,0 +1,819 @@
+---
+title: "Pseudobulk Modeling for Stimulation Conditions"
+author: "Harvard Chan Bioinformatics Core"
+date: "`r Sys.Date()`"
+output:
+   html_document:
+      code_folding: hide
+      df_print: paged
+      highlights: pygments
+      number_sections: false
+      self_contained: true
+      theme: default
+      toc: true
+      toc_float:
+         collapsed: true
+         smooth_scroll: true
+editor_options: 
+  chunk_output_type: console
+params:
+  project_file: information.R
+  seurat_qs_fn: ../data_processed/DtST.qs
+  meta_fn: ../meta/20240729_metadata_sc.xlsx
+  scrna_meta_fn: ../results/scrna_meta_stim.csv
+  counts_csf_fn: ../results/pseudobulk_counts_vst_stim_CSF.csv
+  coldata_csf_fn: ../results/pseudobulk_coldata_stim_CSF.csv
+  res_csf_fn: ../results/DE_all_genes_stim_CSF.csv
+  counts_pbmc_fn: ../results/pseudobulk_counts_vst_PBMC.csv
+  coldata_pbmc_fn: ../results/pseudobulk_coldata_PBMC.csv
+  res_pbmc_fn: ../results/DE_all_genes_PBMC.csv
+---
+
+```{r load_params, echo = F}
+source(params$project_file)
+```
+
+```{r load_libraries, cache = FALSE, message = FALSE, warning=FALSE, echo=FALSE}
+
+current_libs <- .libPaths()
+.libPaths('/n/app/bcbio/R4.3.1_singlecell/')
+library(rmarkdown)
+library(qs)
+library(tidyverse)
+library(Seurat)
+library(DESeq2)
+library(DEGreport)
+library(bcbioR)
+library(ggprism)
+library(patchwork)
+library(ggpubr)
+library(UpSetR)
+library(pheatmap)
+# library(BiocParallel)
+# register(MulticoreParam(8))
+
+options(stringsAsFactors = FALSE)
+
+colors=cb_friendly_cols(1:15)
+ggplot2::theme_set(theme_prism(base_size = 14))
+knitr::opts_chunk[["set"]](
+    cache = F,
+    cache.lazy = FALSE,
+    dev = c("png", "pdf"),
+    error = TRUE,
+    highlight = TRUE,
+    message = FALSE,
+    prompt = FALSE,
+    tidy = FALSE,
+    warning = FALSE,
+    echo = T, 
+    fig.height = 4)
+
+# set seed for reproducibility
+set.seed(1234567890L)
+
+```
+
+```{r sanitize_datatable}
+sanitize_datatable = function(df, ...) {
+ # remove dashes which cause wrapping
+ DT::datatable(df, ..., rownames=gsub("-", "_", rownames(df)),
+                   colnames=gsub("-", "_", colnames(df)),
+               filter = 'top')
+}
+```
+
+# Overview
+
+-   Project: `r project`
+-   PI: `r PI`
+-   Analyst: `r analyst`
+-   Experiment: `r experiment`
+-   Aim: `r aim`
+
+# Objective
+
+Examine changes in gene expression across cell type (L1 annotation level), time (0, 3, 12 months), treatment conditions (Ctrl, LPS, BCG), and tissue type (CSF, PBMC). Other covariates were found to be minimally significant and impossible to accurately model (see weinberg_pseudobulk_PCA_hbc04803.html), so they are excluded here. So that we avoid a situation where treatment effect is confounded with donor effect, we include only samples from donors who yielded samples that underwent stimulation. 
+
+We recognize that longitudinal comparisons are of most interest scientifically, but we include cross sectional comparisons as well for the sake of completeness. 
+
+# Cell Counts for Pseudobulking
+
+The psueudobulk samples we propose to create are tissue x cell type x donor x treatment x time, and we can see that most of those pseudobulk samples will be composed of at least 30 cells. For those pseudobulk samples composed of fewer cells, statistical results may be less reliable. 
+
+```{r load data, eval = !file.exists(params$counts_csf_fn)}
+
+scrna <- qread('../data_processed/DtST.qs')
+
+scrna_meta <- scrna@meta.data
+# meta_for_missingness <- scrna_meta %>% dplyr::select(donor, tissue, treatment, time) %>%
+#   mutate(condition = ifelse(donor %in% c('242_003', '242_010', '242_014', '2577_010', 'LS1089'), 'stim', 'basal')) %>%
+#   mutate(time = factor(time, levels = c(0,3,12))) %>% distinct()
+
+# ggplot(meta_for_missingness %>% filter(condition == 'stim'), aes(x = time, y = donor)) + 
+#   facet_grid(tissue~treatment) + geom_point() + ggtitle('stimulated samples')
+# ggplot(meta_for_missingness %>% filter(condition == 'basal'), aes(x = time, y = donor)) + 
+#   facet_wrap(~ tissue) + geom_point() + ggtitle('basal samples')
+
+scrna_stim <- subset(scrna, 
+                cells = colnames(scrna)[which(scrna$donor %in% c('242_003', '242_010', '242_014', '2577_010'))]
+                  # cells = colnames(scrna)[which(scrna$donor %in% c('242_003', '242_010', '242_014', '2577_010') | 
+                  #                                 (scrna$donor == 'LS1089' & scrna$time == 0))]
+                )
+
+scrna_stim_meta <- scrna_stim@meta.data %>% as.data.frame()
+write_csv(scrna_stim_meta, params$scrna_meta_fn)
+
+ribo_genes <- grep(rownames(scrna_stim), pattern="^RPS|^RPL")
+scrna_stim <- scrna_stim[-ribo_genes,]
+
+scrna_stim$tdtc <- factor(paste(scrna_stim$treatment, scrna_stim$donor, scrna_stim$time, 
+                                scrna_stim$predicted.celltype.l1, sep = "_"))
+
+meta <- readxl::read_xlsx(params$meta_fn) 
+```
+
+```{r plot cell numbers l1, fig.height = 6, fig.width = 12}
+scrna_stim_meta <- read_csv(params$scrna_meta_fn)
+
+cell_type_counts <- scrna_stim_meta %>% group_by(tissue, predicted.celltype.l1, donor, time, treatment) %>%
+  summarize(n = n()) %>%
+  mutate(time = factor(time, levels = c(0,3,12)))
+
+ggplot(cell_type_counts, aes(x = predicted.celltype.l1, y = n, fill = treatment)) + 
+  geom_boxplot() + geom_hline(yintercept = 30, linetype = 2) +
+  facet_grid(tissue~time) + scale_fill_cb_friendly() + scale_y_log10() +
+  scale_x_discrete(guide = guide_axis(angle = 45))
+```
+
+```{r plot cell numbers l2, fig.height = 6, fig.width = 9}
+cell_type_counts_l2 <- scrna_stim_meta %>% group_by(tissue, predicted.celltype.l2, donor, time, treatment) %>% 
+  summarize(n = n()) %>%
+  mutate(time = factor(time, levels = c(0,3,12)))
+
+ggplot(cell_type_counts_l2, aes(x = predicted.celltype.l2, y = n, fill = treatment)) + 
+  geom_boxplot() + geom_hline(yintercept = 30, linetype = 2) +
+  facet_wrap(~tissue, nrow = 2) + scale_fill_cb_friendly() + scale_y_log10() +
+  scale_x_discrete(guide = guide_axis(angle = 45))
+
+```
+
+# CSF
+
+## Sample Clustering
+
+We know from the plots in the Pseudobulk PCA Analysis report that the pseudobulked samples cluster mostly by cell type. After subsetting by cell type, some clustering by treatment is observed, but not much. 
+
+Specifically, we do not see any major differences between 2577_010 (the donor who does not have PBMC samples) and the other 3 donors, so it is fair to include 2577_010 in any analysis for comparing CSF and PBMC.
+
+
+```{r subset csf, eval = !file.exists(params$counts_csf_fn)}
+csf <-subset(scrna_stim, cells=colnames(scrna_stim)[which(scrna_stim$tissue == "csf" )])
+
+```
+
+```{r aggregate counts csf, eval = !file.exists(params$counts_csf_fn)}
+
+agg_counts_csf_seurat <- AggregateExpression(csf, return.seurat = T, slot = "counts", 
+                                      assays = "RNA", group.by = "tdtc")
+
+agg_counts_csf <- FetchData(agg_counts_csf_seurat, layer = "counts", vars = rownames(agg_counts_csf_seurat)) %>% t()
+
+colnames(agg_counts_csf) <- sapply(colnames(agg_counts_csf), function(x) gsub('-', '_', x)) %>% as.character()
+
+csf_meta <- csf@meta.data %>% as.data.frame()
+
+coldata_csf <- csf@meta.data %>% as.data.frame() %>% 
+  dplyr::select(donor, time, treatment, predicted.celltype.l1, tdtc) %>%
+  distinct() %>%
+  mutate(tdt = paste(treatment, donor, time, sep ='_'),
+         time = factor(time, levels = c(0, 3, 12)),
+         treatment = factor(treatment, levels = c('Ctrl', 'BCG', 'LPS')),
+         treatment_time = paste(treatment, time, sep = '_'))
+
+coldata_csf$tdtc <- sapply(coldata_csf$tdtc, function(x) gsub('-', '_', x))
+rownames(coldata_csf) <- coldata_csf$tdtc
+coldata_csf <- coldata_csf[colnames(agg_counts_csf), ]
+stopifnot(all(rownames(coldata_csf) == colnames(agg_counts_csf)))
+
+dds_csf <- DESeqDataSetFromMatrix(agg_counts_csf,
+                                  colData = coldata_csf,
+                                  design = ~1)
+dds_csf <- DESeq(dds_csf)
+  
+vst_csf <- vst(dds_csf)
+
+vst_csf_df <- assay(vst_csf) %>% as.data.frame()
+rownames(vst_csf_df) <- rownames(agg_counts_csf)
+
+write_csv(vst_csf_df %>% rownames_to_column('gene_name'), params$counts_csf_fn)
+write_csv(coldata_csf, params$coldata_csf_fn)
+
+```
+
+
+```{r load agg counts csf}
+
+vst_csf_df <- read_csv(params$counts_csf_fn) %>% column_to_rownames('gene_name')
+coldata_csf <- read_csv(params$coldata_csf_fn) 
+rownames(coldata_csf) <- coldata_csf$tdtc
+
+```
+
+```{r clustering csf, fig.height = 5}
+vst_cor <- cor(as.matrix(vst_csf_df))
+
+colma=coldata_csf %>% as.data.frame() %>% mutate(time = factor(time, levels = c(0, 3, 12)))
+rownames(colma) <- colma$tdtc
+colma <- colma[rownames(vst_cor), ]
+colma <- colma %>% dplyr::select(predicted.celltype.l1, treatment, time)
+anno_colors=lapply(colnames(colma), function(c){
+  l.col=cb_friendly_pal('main')(length(unique(colma[[c]])))
+  names(l.col)=unique(colma[[c]])
+  l.col
+})
+names(anno_colors)=colnames(colma)
+
+p <- pheatmap(vst_cor,
+         annotation = colma,
+         annotation_colors = anno_colors,
+         show_rownames = F,
+         show_colnames = F,
+         color = cb_friendly_pal('heatmap')(15)
+         )
+p
+
+```
+
+### Per cell type {.tabset}
+
+```{r clustering cell type csf, results = 'asis', fig.height = 6, fig.width = 10}
+
+for (cell_type in sort(unique(coldata_csf$predicted.celltype.l1))){
+  
+  cat("#### ", cell_type, "\n")
+  
+  coldata_csf_cell_type <- coldata_csf %>% filter(predicted.celltype.l1 == cell_type) %>% as.matrix()
+  vst_csf_cell_type <- vst_csf_df[, rownames(coldata_csf_cell_type)] %>% as.matrix()
+  stopifnot(all(rownames(coldata_csf_cell_type) == colnames(vst_csf_cell_type)))
+  
+  p1 <- degPCA(vst_csf_cell_type, coldata_csf_cell_type, 
+               condition = 'donor', shape = 'treatment')
+  
+  p2 <- degPCA(vst_csf_cell_type, coldata_csf_cell_type, 
+               condition = 'time', shape = 'treatment')
+  
+  p3 <- ggarrange(p1, p2)
+  print(p3)
+  
+  cat('\n\n')
+}
+
+```
+
+## DE Genes 
+
+We use a model that accounts for `donor` along with a combined `treatment_time` variable so that we can examine contrasts such as `BCG 3 months` vs `Ctrl 3 months` and `LPS 12 months` vs `LPS 0 months`. We also subset the data by cell type and run one model per cell type since, as shown in the Pseudobulk PCA Analysis report, variance between samples depends heavily on cell type. 
+
+```{r subset csf by cell type, results = 'asis', fig.height = 8, eval = !file.exists(params$res_csf_fn)}
+
+for (cell_type in sort(unique(coldata_csf$predicted.celltype.l1))){
+  
+  cat("## ", cell_type, "\n")
+  
+  coldata_csf_cell_type <- coldata_csf %>% filter(predicted.celltype.l1 == cell_type, tdt != 'Ctrl_242_001_3')
+  agg_counts_csf_cell_type <- agg_counts_csf[, rownames(coldata_csf_cell_type)]
+  
+  dds_csf_cell_type_dummy <- DESeqDataSetFromMatrix(agg_counts_csf_cell_type,
+                                  colData = coldata_csf_cell_type,
+                                  design = ~ donor + treatment_time)
+  dds_csf_cell_type_dummy <- DESeq(dds_csf_cell_type_dummy)
+  
+  vst_csf_cell_type_dummy <- varianceStabilizingTransformation(dds_csf_cell_type_dummy)
+  
+  # within-timepoint BCG vs Ctrl
+  res_B0_C0 = lfcShrink(dds_csf_cell_type_dummy, 
+                        contrast = c('treatment_time', 'BCG_0', 'Ctrl_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'BCG0_vs_Ctrl0') %>% 
+    rownames_to_column('gene_name')
+  res_B3_C3 = lfcShrink(dds_csf_cell_type_dummy, 
+                        contrast = c('treatment_time', 'BCG_3', 'Ctrl_3'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'BCG3_vs_Ctrl3') %>% 
+    rownames_to_column('gene_name')
+  res_B12_C12 = lfcShrink(dds_csf_cell_type_dummy, 
+                          contrast = c('treatment_time', 'BCG_12', 'Ctrl_12'), type = 'ashr') %>%
+    as.data.frame() %>% 
+    mutate(comparison = 'BCG12_vs_Ctrl12') %>% 
+    rownames_to_column('gene_name')
+  
+  # within-timepoint LPS vs Ctrl
+  res_L0_C0 = lfcShrink(dds_csf_cell_type_dummy, 
+                        contrast = c('treatment_time', 'LPS_0', 'Ctrl_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'LPS0_vs_Ctrl0') %>% 
+    rownames_to_column('gene_name')
+  res_L3_C3 = lfcShrink(dds_csf_cell_type_dummy, 
+                        contrast = c('treatment_time', 'LPS_3', 'Ctrl_3'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'LPS3_vs_Ctrl3') %>% 
+    rownames_to_column('gene_name')
+  res_L12_C12 = lfcShrink(dds_csf_cell_type_dummy, 
+                          contrast = c('treatment_time', 'LPS_12', 'Ctrl_12'), type = 'ashr') %>%
+    as.data.frame() %>% 
+    mutate(comparison = 'LPS12_vs_Ctrl12') %>% 
+    rownames_to_column('gene_name')
+  
+  # BCG vs BCG across timepoints
+  res_B3_B0 = lfcShrink(dds_csf_cell_type_dummy, 
+                        contrast = c('treatment_time', 'BCG_3', 'BCG_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'BCG3_vs_BCG0') %>% 
+    rownames_to_column('gene_name')
+  res_B12_B0 = lfcShrink(dds_csf_cell_type_dummy, 
+                         contrast = c('treatment_time', 'BCG_12', 'BCG_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'BCG12_vs_BCG0') %>% 
+    rownames_to_column('gene_name')
+  res_B12_B3 = lfcShrink(dds_csf_cell_type_dummy, 
+                         contrast = c('treatment_time', 'BCG_12', 'BCG_3'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'BCG12_vs_BCG3') %>% 
+    rownames_to_column('gene_name')
+  
+  # LPS vs LPS across timepoints
+  res_L3_L0 = lfcShrink(dds_csf_cell_type_dummy, 
+                        contrast = c('treatment_time', 'LPS_3', 'LPS_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'LPS3_vs_LPS0') %>% 
+    rownames_to_column('gene_name')
+  res_L12_L0 = lfcShrink(dds_csf_cell_type_dummy, 
+                         contrast = c('treatment_time', 'LPS_12', 'LPS_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'LPS12_vs_LPS0') %>% 
+    rownames_to_column('gene_name')
+  res_L12_L3 = lfcShrink(dds_csf_cell_type_dummy, 
+                         contrast = c('treatment_time', 'LPS_12', 'LPS_3'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'LPS12_vs_LPS3') %>% 
+    rownames_to_column('gene_name')
+  
+  # Ctrl vs Ctrl across timepoints
+  res_C3_C0 = lfcShrink(dds_csf_cell_type_dummy, 
+                        contrast = c('treatment_time', 'Ctrl_3', 'Ctrl_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'Ctrl3_vs_Ctrl0') %>% 
+    rownames_to_column('gene_name')
+  res_C12_C0 = lfcShrink(dds_csf_cell_type_dummy, 
+                         contrast = c('treatment_time', 'Ctrl_12', 'Ctrl_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'Ctrl12_vs_Ctrl0') %>% 
+    rownames_to_column('gene_name')
+  res_C12_C3 = lfcShrink(dds_csf_cell_type_dummy, 
+                         contrast = c('treatment_time', 'Ctrl_12', 'Ctrl_3'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'Ctrl12_vs_Ctrl3') %>% 
+    rownames_to_column('gene_name')
+  
+  res_all <- rbind(res_B0_C0, 
+                   res_B3_C3, 
+                   res_B12_C12, 
+                   res_L0_C0, 
+                   res_L3_C3, 
+                   res_L12_C12,
+                   res_B3_B0,
+                   res_B12_B0, 
+                   res_B12_B3,
+                   res_L3_L0,
+                   res_L12_L0,
+                   res_L12_L3,
+                   res_C3_C0,
+                   res_C12_C0,
+                   res_C12_C3) %>%
+    mutate(celltype = cell_type)
+  
+  write_csv(res_all, paste0('../results/DE_all_genes_stim_CSF_', gsub(' ', '', cell_type), '.csv'))
+  
+  # res_sig_all %>% sanitize_datatable()
+  # 
+  # n_genes <- ifelse(nrow(res_sig_all) > 9, 9, nrow(res_sig_all))
+  # vst_counts_sig <- assay(vst_csf_cell_type_dummy)[res_sig_all$gene_name[1:n_genes], ]
+  # vst_counts_sig_long <- vst_counts_sig %>% as.data.frame() %>% rownames_to_column('gene_name') %>%
+  #   pivot_longer(!gene_name, names_to = 'tdtc', values_to = 'log2_counts') %>%
+  #    left_join(coldata_csf_cell_type) 
+  # 
+  # p <- ggplot(vst_counts_sig_long, aes(x = time, y = log2_counts, fill = treatment)) + 
+  #   geom_boxplot() + facet_wrap(~gene_name, scale = 'free_y') + scale_fill_cb_friendly()
+  # print(p)
+
+  cat('\n\n')
+
+}
+
+```
+
+```{r combine results csf, eval = !file.exists(params$res_csf_fn)}
+files <- list.files('../results/', pattern = '*.csv')
+files <- files[grepl('CSF', files) & grepl('DE', files) & grepl('stim', files)]
+
+res <- lapply(files, function(x) read_csv(paste0('../results/', x))) %>% bind_rows()
+write_csv(res, params$res_csf_fn)
+```
+
+```{r load results csf}
+res <- read_csv(params$res_csf_fn)
+
+res_sig <- res %>% filter(padj < 0.05) %>% arrange(padj)
+
+```
+
+### Overview
+
+Most differential gene expression is observed in monocytes and dendritic cells, and specifically in the LPS vs Ctrl comparisons within individual timepoints. 
+
+Within dendritic cells and monocytes, there is considerable overlap between the set of DEGs observed in LPS 3 months vs Ctrl 3 months and the set of DEGs observed in LPS 12 months vs Ctrl 12 months.
+
+```{r summary bar csf, fig.width = 9}
+
+ggplot(res_sig, aes(x = celltype, fill = comparison)) + geom_bar() + ylab('n DEGs') +
+  scale_fill_cb_friendly() + ggtitle('With LPS vs Ctrl')
+
+ggplot(res_sig %>% filter(!grepl('LPS[0-9]+_vs_Ctrl', comparison)), 
+       aes(x = celltype, fill = comparison)) + geom_bar() + ylab('n DEGs') +
+  scale_fill_cb_friendly() + ggtitle('Without LPS vs Ctrl')
+```
+
+### Table of all DEGs
+```{r de table csf}
+res_sig %>% sanitize_datatable()
+```
+
+### Per cell type {.tabset}
+
+```{r display results per cell type csf, results = 'asis', fig.height = 6}
+
+for (cell_type in sort(unique(res_sig$celltype))){
+  
+
+  res_sig_cell_type <- res_sig %>% filter(celltype == cell_type)
+  
+  if(nrow(res_sig_cell_type) > 1){
+    cat("#### ", cell_type, "\n") 
+  
+    de_list <- lapply(unique(res_sig_cell_type$comparison), 
+                      function(x) res_sig_cell_type %>% filter(comparison == x) %>% pull(gene_name))
+    names(de_list) <- unique(res_sig_cell_type$comparison)
+    p <- upset(fromList(de_list), order.by = "freq", nsets=length(de_list), nintersects = 15)
+    print(p)
+    
+    cat('\n\n')
+  }
+
+}
+```
+
+### Per comparison {.tabset}
+
+```{r display results per comparison csf, results = 'asis', fig.height = 5}
+
+for (comp in sort(unique(res_sig$comparison))){
+  
+
+  res_sig_comp <- res_sig %>% filter(comparison == comp)
+  
+  if(nrow(res_sig_comp) > 1){
+    cat("#### ", comp, "\n") 
+  
+    de_list <- lapply(sort(unique(res_sig_comp$celltype)), 
+                      function(x) res_sig_comp %>% filter(celltype == x) %>% pull(gene_name))
+    names(de_list) <- sort(unique(res_sig_comp$celltype))
+    p <- upset(fromList(de_list), order.by = "freq", nsets=length(de_list), nintersects = 15)
+    print(p)
+    
+    cat('\n\n')
+  }
+
+}
+```
+
+
+
+# PBMC
+
+
+## Sample Clustering
+
+PBMC samples cluster by cell type much more strongly than CSF samples. After subsetting by cell type, samples mostly cluster by donor. 
+
+
+```{r subset pbmc, eval = !file.exists(params$counts_pbmc_fn)}
+pbmc <-subset(scrna_stim, cells=colnames(scrna_stim)[which(scrna_stim$tissue == "pbmc" )])
+
+```
+
+```{r aggregate counts pbmc, eval = !file.exists(params$counts_pbmc_fn)}
+
+agg_counts_pbmc_seurat <- AggregateExpression(pbmc, return.seurat = T, slot = "counts", 
+                                      assays = "RNA", group.by = "tdtc")
+
+agg_counts_pbmc <- FetchData(agg_counts_pbmc_seurat, layer = "counts", vars = rownames(agg_counts_pbmc_seurat)) %>% t()
+
+colnames(agg_counts_pbmc) <- sapply(colnames(agg_counts_pbmc), function(x) gsub('-', '_', x)) %>% as.character()
+
+pbmc_meta <- pbmc@meta.data %>% as.data.frame()
+
+coldata_pbmc <- pbmc@meta.data %>% as.data.frame() %>% 
+  dplyr::select(donor, time, treatment, predicted.celltype.l1, tdtc) %>%
+  distinct() %>%
+  mutate(tdt = paste(treatment, donor, time, sep ='_'),
+         time = factor(time, levels = c(0, 3, 12)),
+         treatment = factor(treatment, levels = c('Ctrl', 'Unstim', 'BCG', 'LPS')),
+         treatment_time = paste(treatment, time, sep = '_'))
+
+coldata_pbmc$tdtc <- sapply(coldata_pbmc$tdtc, function(x) gsub('-', '_', x))
+rownames(coldata_pbmc) <- coldata_pbmc$tdtc
+coldata_pbmc <- coldata_pbmc[colnames(agg_counts_pbmc), ]
+stopifnot(all(rownames(coldata_pbmc) == colnames(agg_counts_pbmc)))
+
+dds_pbmc <- DESeqDataSetFromMatrix(agg_counts_pbmc,
+                                  colData = coldata_pbmc,
+                                  design = ~1)
+dds_pbmc <- DESeq(dds_pbmc)
+  
+vst_pbmc <- vst(dds_pbmc)
+
+vst_pbmc_df <- assay(vst_pbmc) %>% as.data.frame()
+rownames(vst_pbmc_df) <- rownames(agg_counts_pbmc)
+
+write_csv(vst_pbmc_df %>% rownames_to_column('gene_name'), params$counts_pbmc_fn)
+write_csv(coldata_pbmc, params$coldata_pbmc_fn)
+
+```
+
+
+```{r load agg counts pbmc}
+
+vst_pbmc_df <- read_csv(params$counts_pbmc_fn) %>% column_to_rownames('gene_name')
+coldata_pbmc <- read_csv(params$coldata_pbmc_fn) 
+rownames(coldata_pbmc) <- coldata_pbmc$tdtc
+
+```
+
+```{r clustering pbmc, fig.height = 5}
+vst_cor <- cor(as.matrix(vst_pbmc_df))
+
+colma=coldata_pbmc %>% as.data.frame() %>% mutate(time = factor(time, levels = c(0, 3, 12)))
+rownames(colma) <- colma$tdtc
+colma <- colma[rownames(vst_cor), ]
+colma <- colma %>% dplyr::select(predicted.celltype.l1, treatment, time)
+anno_colors=lapply(colnames(colma), function(c){
+  l.col=cb_friendly_pal('main')(length(unique(colma[[c]])))
+  names(l.col)=unique(colma[[c]])
+  l.col
+})
+names(anno_colors)=colnames(colma)
+
+p <- pheatmap(vst_cor,
+         annotation = colma,
+         annotation_colors = anno_colors,
+         show_rownames = F,
+         show_colnames = F,
+         color = cb_friendly_pal('heatmap')(15)
+         )
+p
+
+```
+
+### Per cell type {.tabset}
+
+```{r clustering cell type pbmc, results = 'asis', fig.height = 6, fig.width = 10}
+
+for (cell_type in sort(unique(coldata_pbmc$predicted.celltype.l1))){
+  
+cat("#### ", cell_type, "\n")
+  
+  coldata_pbmc_cell_type <- coldata_pbmc %>% filter(predicted.celltype.l1 == cell_type) %>% as.matrix()
+  vst_pbmc_cell_type <- vst_pbmc_df[, rownames(coldata_pbmc_cell_type)] %>% as.matrix()
+  stopifnot(all(rownames(coldata_pbmc_cell_type) == colnames(vst_pbmc_cell_type)))
+  
+  p1 <- degPCA(vst_pbmc_cell_type, coldata_pbmc_cell_type, 
+               condition = 'donor', shape = 'treatment')
+  
+  p2 <- degPCA(vst_pbmc_cell_type, coldata_pbmc_cell_type, 
+               condition = 'time', shape = 'treatment')
+  
+  p3 <- ggarrange(p1, p2)
+  print(p3)
+  
+  cat('\n\n')
+}
+
+```
+
+## DE Genes 
+
+```{r subset pbmc by cell type, results = 'asis', fig.height = 8, eval = !file.exists(params$res_pbmc_fn)}
+
+for (cell_type in sort(unique(coldata_pbmc$predicted.celltype.l1))){
+  
+  cat("## ", cell_type, "\n")
+  
+  coldata_pbmc_cell_type <- coldata_pbmc %>% filter(predicted.celltype.l1 == cell_type, tdt != 'Ctrl_242_001_3')
+  agg_counts_pbmc_cell_type <- agg_counts_pbmc[, rownames(coldata_pbmc_cell_type)]
+  
+  dds_pbmc_cell_type_dummy <- DESeqDataSetFromMatrix(agg_counts_pbmc_cell_type,
+                                  colData = coldata_pbmc_cell_type,
+                                  design = ~ donor + treatment_time)
+  dds_pbmc_cell_type_dummy <- DESeq(dds_pbmc_cell_type_dummy)
+  
+  vst_pbmc_cell_type_dummy <- varianceStabilizingTransformation(dds_pbmc_cell_type_dummy)
+  
+  
+  res_B0_C0 = lfcShrink(dds_pbmc_cell_type_dummy, 
+                        contrast = c('treatment_time', 'BCG_0', 'Ctrl_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'BCG0_vs_Ctrl0') %>% 
+    rownames_to_column('gene_name')
+  res_B3_C3 = lfcShrink(dds_pbmc_cell_type_dummy, 
+                        contrast = c('treatment_time', 'BCG_3', 'Ctrl_3'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'BCG3_vs_Ctrl3') %>% 
+    rownames_to_column('gene_name')
+  res_B12_C12 = lfcShrink(dds_pbmc_cell_type_dummy, 
+                          contrast = c('treatment_time', 'BCG_12', 'Ctrl_12'), type = 'ashr') %>%
+    as.data.frame() %>% 
+    mutate(comparison = 'BCG12_vs_Ctrl12') %>% 
+    rownames_to_column('gene_name')
+  res_L0_C0 = lfcShrink(dds_pbmc_cell_type_dummy, 
+                        contrast = c('treatment_time', 'LPS_0', 'Ctrl_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'LPS0_vs_Ctrl0') %>% 
+    rownames_to_column('gene_name')
+  res_L3_C3 = lfcShrink(dds_pbmc_cell_type_dummy, 
+                        contrast = c('treatment_time', 'LPS_3', 'Ctrl_3'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'LPS3_vs_Ctrl3') %>% 
+    rownames_to_column('gene_name')
+  res_L12_C12 = lfcShrink(dds_pbmc_cell_type_dummy, 
+                          contrast = c('treatment_time', 'LPS_12', 'Ctrl_12'), type = 'ashr') %>%
+    as.data.frame() %>% 
+    mutate(comparison = 'LPS12_vs_Ctrl12') %>% 
+    rownames_to_column('gene_name')
+  
+  
+  res_B3_B0 = lfcShrink(dds_pbmc_cell_type_dummy, 
+                        contrast = c('treatment_time', 'BCG_3', 'BCG_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'BCG3_vs_BCG0') %>% 
+    rownames_to_column('gene_name')
+  res_B12_B0 = lfcShrink(dds_pbmc_cell_type_dummy, 
+                         contrast = c('treatment_time', 'BCG_12', 'BCG_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'BCG12_vs_BCG0') %>% 
+    rownames_to_column('gene_name')
+  res_L3_L0 = lfcShrink(dds_pbmc_cell_type_dummy, 
+                        contrast = c('treatment_time', 'LPS_3', 'LPS_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'LPS3_vs_LPS0') %>% 
+    rownames_to_column('gene_name')
+  res_L12_L0 = lfcShrink(dds_pbmc_cell_type_dummy, 
+                         contrast = c('treatment_time', 'LPS_12', 'LPS_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'LPS12_vs_LPS0') %>% 
+    rownames_to_column('gene_name')
+  res_C3_C0 = lfcShrink(dds_pbmc_cell_type_dummy, 
+                        contrast = c('treatment_time', 'Ctrl_3', 'Ctrl_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'Ctrl3_vs_Ctrl0') %>% 
+    rownames_to_column('gene_name')
+  res_C12_C0 = lfcShrink(dds_pbmc_cell_type_dummy, 
+                         contrast = c('treatment_time', 'Ctrl_12', 'Ctrl_0'), type = 'ashr') %>% 
+    as.data.frame() %>% 
+    mutate(comparison = 'Ctrl12_vs_Ctrl0') %>% 
+    rownames_to_column('gene_name')
+  
+  
+  res_all <- rbind(res_B0_C0, 
+                   res_B3_C3, 
+                   res_B12_C12, 
+                   res_L0_C0, 
+                   res_L3_C3, 
+                   res_L12_C12,
+                   res_B3_B0,
+                   res_B12_B0, 
+                   res_L3_L0,
+                   res_L12_L0,
+                   res_C3_C0,
+                   res_C12_C0) %>%
+    mutate(celltype = cell_type)
+  
+  write_csv(res_all, paste0('../results/DE_all_genes_PBMC_', gsub(' ', '', cell_type), '.csv'))
+  
+  # res_sig_all %>% sanitize_datatable()
+  # 
+  # n_genes <- ifelse(nrow(res_sig_all) > 9, 9, nrow(res_sig_all))
+  # vst_counts_sig <- assay(vst_pbmc_cell_type_dummy)[res_sig_all$gene_name[1:n_genes], ]
+  # vst_counts_sig_long <- vst_counts_sig %>% as.data.frame() %>% rownames_to_column('gene_name') %>%
+  #   pivot_longer(!gene_name, names_to = 'tdtc', values_to = 'log2_counts') %>%
+  #    left_join(coldata_pbmc_cell_type) 
+  # 
+  # p <- ggplot(vst_counts_sig_long, aes(x = time, y = log2_counts, fill = treatment)) + 
+  #   geom_boxplot() + facet_wrap(~gene_name, scale = 'free_y') + scale_fill_cb_friendly()
+  # print(p)
+
+  cat('\n\n')
+
+}
+
+```
+
+```{r combine results pbmc, eval = !file.exists(params$res_pbmc_fn)}
+files <- list.files('../results/', pattern = '*.csv')
+files <- files[grepl('PBMC', files) & grepl('DE', files)]
+
+res <- lapply(files, function(x) read_csv(paste0('../results/', x))) %>% bind_rows()
+write_csv(res, params$res_pbmc_fn)
+```
+
+```{r load results pbmc}
+res <- read_csv(params$res_pbmc_fn)
+
+res_sig <- res %>% filter(padj < 0.05) %>% arrange(padj)
+
+```
+
+### Overview
+
+There are many thousands more DEGs observed in the PBMC samples than in the CSF samples, particularly in the BCG vs Ctrl comparisons. However, as in the CSF samples, most differential gene expression is observed in monocytes and dendritic cells, and specifically in the LPS vs Ctrl comparisons within individual timepoints. 
+
+As in the CSF samples, we see considerable overlap in DEGs observed between various treatment vs control comparisons and across cell types. 
+
+```{r summary bar pbmc, fig.width = 9}
+
+ggplot(res_sig, aes(x = celltype, fill = comparison)) + geom_bar() + ylab('n DEGs') +
+  scale_fill_cb_friendly() + ggtitle('With LPS vs Ctrl')
+
+ggplot(res_sig %>% filter(!grepl('LPS[0-9]+_vs_Ctrl', comparison)), 
+       aes(x = celltype, fill = comparison)) + geom_bar() + ylab('n DEGs') +
+  scale_fill_cb_friendly() + ggtitle('Without LPS vs Ctrl')
+```
+
+### Table of all DEGs
+```{r de table pbmc}
+res_sig %>% sanitize_datatable()
+```
+
+### Per cell type {.tabset}
+
+```{r display results per cell type pbmc, results = 'asis', fig.height = 5}
+
+for (cell_type in sort(unique(res_sig$celltype))){
+  
+  cat("#### ", cell_type, "\n") 
+
+  res_sig_cell_type <- res_sig %>% filter(celltype == cell_type)
+  
+  de_list <- lapply(unique(res_sig_cell_type$comparison), 
+                    function(x) res_sig_cell_type %>% filter(comparison == x) %>% pull(gene_name))
+  names(de_list) <- unique(res_sig_cell_type$comparison)
+  p <- upset(fromList(de_list), order.by = "freq", nsets=length(de_list), nintersects = 15)
+  print(p)
+  
+  cat('\n\n')
+
+}
+```
+
+### Per comparison {.tabset}
+
+```{r display results per comparison pbmc, results = 'asis', fig.height = 5}
+
+for (comp in sort(unique(res_sig$comparison))){
+  
+  cat("#### ", comp, "\n") 
+
+  res_sig_comp <- res_sig %>% filter(comparison == comp)
+  
+  de_list <- lapply(sort(unique(res_sig_comp$celltype)), 
+                    function(x) res_sig_comp %>% filter(celltype == x) %>% pull(gene_name))
+  names(de_list) <- sort(unique(res_sig_comp$celltype))
+  p <- upset(fromList(de_list), order.by = "freq", nsets=length(de_list), nintersects = 15)
+  print(p)
+  
+  cat('\n\n')
+
+}
+```
+
+# Conclusions
+
+In both PBMC and CSF samples, dendritic cells and monocytes show the highest numbers of differentially expressed genes. The treatment comparisons that yield that highest numbers of differentially expressed genes are stimuation vs control within a timepoint, particularly LPS vs Ctrl. 
+
+PBMC samples show overall more differentially expressed genes than CSF samples, particularly in the BCG vs Ctrl comparisons. 
+
+Limitations of this analysis include:
+
+- low number of donors
+- not every donor has every time x treatment x celltype combination, limiting the types of models that can be applied
+- low cell numbers for some cell types
