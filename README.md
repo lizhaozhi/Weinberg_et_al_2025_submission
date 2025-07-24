@@ -16,7 +16,7 @@ Aging is marked by immune remodeling and chronic low-grade inflammation that com
 Raw and processed scRNA-seq data are deposited in **NCBI GEO** (accession numbers: XXXXXXX).
 
 
-### Citation
+## Citation
 
 If you use this repository, please cite:
 ``
@@ -24,7 +24,7 @@ Weinberg MS, Kodali MC, Li Z, et al.  BCG vaccination induces trained immunity a
 ``
 
 
-### Contact
+## Contact
 
 For questions or collaborations, please leave a Github issue or contact:  
 **Marc S. Weinberg** (marc.weinberg.lab@gmail.com) or **Steven E. Arnold** (searnold@mgh.harvard.edu)  
