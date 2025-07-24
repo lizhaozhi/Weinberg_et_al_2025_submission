@@ -1,0 +1,653 @@
+---
+title: "Figure 4"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(dplyr)
+library(magick)
+```
+
+
+## CSF IFNγ
+
+```{r}
+# Parameters
+cytokine = "IFNγ"
+compartment = "CSF"
+
+# Data
+months = c(0, 3, 12)
+jitter = 0.15
+
+ln_AD0 = c(3.914, 3.880, 3.745)
+ln_AD1 = c(3.904, 3.909, 3.752)
+ln_AD0_se = c(0.103, 0.103, 0.110)
+ln_AD1_se = c(0.108, 0.108, 0.117)
+
+within_p_values_ln_AD0 = c(NA, 0.654, 0.049)
+within_p_values_ln_AD1 = c(NA, 0.944, 0.097)
+
+y_axis_p_value_locations = list(
+  ln_AD0 = c(NA, 3.92, 3.9),
+  ln_AD1 = c(NA, 3.93, 3.82)
+)
+
+y_axis_limits = c(3.6, 4.1)
+
+# Construct plotting data
+df_IFNg = bind_rows(
+  data.frame(
+    month = months - jitter, group = "Non-AD", 
+    mean = ln_AD0, se = ln_AD0_se,
+    pval = within_p_values_ln_AD0, p_y = y_axis_p_value_locations$ln_AD0,
+    tissue = "CSF", cytokine = cytokine,
+    sub_graph = 1
+  ),
+  data.frame(
+    month = months + jitter, group = "AD", 
+    mean = ln_AD1, se = ln_AD1_se,
+    pval = within_p_values_ln_AD1, p_y = y_axis_p_value_locations$ln_AD1,
+    tissue = "CSF", cytokine = cytokine,
+    sub_graph = 1
+  )
+)
+
+df_IFNg$marker = sapply(df_IFNg$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+```
+
+
+## CSF IL2
+
+```{r}
+cytokine = "IL-2"
+compartment = "CSF"
+
+# Data
+months = c(0, 3, 12)
+jitter = 0.15
+
+ln_AD0 = c(4.623364, 4.55123, 4.515049)
+ln_AD1 = c(4.390394, 4.447626, 4.204596)
+ln_AD0_se = c(0.1654763, 0.1654763, 0.1683789)
+ln_AD1_se = c(0.1735531, 0.1735531, 0.1770279)
+
+within_p_values_ln_AD0 = c(NA, NA, NA)
+within_p_values_ln_AD1 = c(NA, NA, 0.009)
+
+y_axis_p_value_locations = list(
+  ln_AD0 = c(NA, 3.91, 3.85),
+  ln_AD1 = c(NA, 4.43, 4.43)
+)
+
+y_axis_limits = c(3.8, 5)
+
+# Combine data
+df_IL2 = bind_rows(
+  data.frame(
+    month = months - jitter, group = "Non-AD", 
+    mean = ln_AD0, se = ln_AD0_se,
+    pval = within_p_values_ln_AD0, p_y = y_axis_p_value_locations$ln_AD0,
+    tissue = "CSF", cytokine = cytokine
+  ),
+  data.frame(
+    month = months + jitter, group = "AD", 
+    mean = ln_AD1, se = ln_AD1_se,
+    pval = within_p_values_ln_AD1, p_y = y_axis_p_value_locations$ln_AD1,
+    tissue = "CSF", cytokine = cytokine
+  )
+)
+
+# Assign significance markers
+df_IL2$marker = sapply(df_IL2$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+```
+
+
+## CSF IL10
+
+```{r}
+cytokine = "IL-10"
+compartment = "CSF"
+
+# Data
+months = c(0, 3, 12)
+jitter = 0.15
+
+ln_AD0 = c(5.7247, 5.67864, 5.61383)
+ln_AD1 = c(5.5333, 5.5083, 5.415)
+ln_AD0_se = c(0.16245, 0.16245, 0.16698)
+ln_AD1_se = c(0.1703848, 0.1703848, 0.1757986)
+
+within_p_values_ln_AD0 = c(NA, NA, NA)
+within_p_values_ln_AD1 = c(NA, NA, NA)
+
+y_axis_p_value_locations = list(
+  ln_AD0 = c(NA, 5.85, 5.8),
+  ln_AD1 = c(NA, 5.85, 5.8)
+)
+
+y_axis_limits = c(5.2, 6)
+
+# Combine data
+df_IL10 = bind_rows(
+  data.frame(
+    month = months - jitter, group = "Non-AD", 
+    mean = ln_AD0, se = ln_AD0_se,
+    pval = within_p_values_ln_AD0, p_y = y_axis_p_value_locations$ln_AD0,
+    tissue = "CSF", cytokine = cytokine
+  ),
+  data.frame(
+    month = months + jitter, group = "AD", 
+    mean = ln_AD1, se = ln_AD1_se,
+    pval = within_p_values_ln_AD1, p_y = y_axis_p_value_locations$ln_AD1,
+    tissue = "CSF", cytokine = cytokine
+  )
+)
+
+# Significance marker column (all NA)
+df_IL10$marker = sapply(df_IL10$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+```
+
+
+## Plasma IFNγ
+
+```{r}
+cytokine = "IFNγ"
+compartment = "Plasma"
+
+# Data
+months = c(0, 3, 6, 12)
+jitter = 0.15
+
+ln_AD0 = c(6.689, 7.089, 6.978, 6.817)
+ln_AD1 = c(6.674, 7.002, 6.981, 6.881)
+ln_AD0_se = c(0.139, 0.139, 0.149, 0.149)
+ln_AD1_se = c(0.145, 0.145, 0.151, 0.173)
+
+within_p_values_ln_AD0 = c(NA, 0.008, 0.071, 0.426)
+within_p_values_ln_AD1 = c(NA, 0.037, 0.059, 0.259)
+
+y_axis_p_value_locations = list(
+  ln_AD0 = c(NA, 7.25, 7.175, 7.05),
+  ln_AD1 = c(NA, 7.18, 7.05, 7.1)
+)
+
+y_axis_limits = c(6.5, 7.3)
+
+# Build plotting dataframe
+df_IFNg_Plasma = bind_rows(
+  data.frame(
+    month = months - jitter,
+    group = "Non-AD", mean = ln_AD0, se = ln_AD0_se,
+    pval = within_p_values_ln_AD0, p_y = y_axis_p_value_locations$ln_AD0,
+    tissue = "Plasma", cytokine = cytokine
+  ),
+  data.frame(
+    month = months + jitter, group = "AD",
+    mean = ln_AD1, se = ln_AD1_se,
+    pval = within_p_values_ln_AD1, p_y = y_axis_p_value_locations$ln_AD1,
+    tissue = "Plasma", cytokine = cytokine
+  )
+)
+
+# Add significance markers
+df_IFNg_Plasma$marker = sapply(df_IFNg_Plasma$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+```
+
+
+## Plasma IL-2
+
+```{r}
+cytokine = "IL-2"
+compartment = "Plasma"
+
+# Data
+months = c(0, 3, 6, 12)
+jitter = 0.15
+
+ln_AD0 = c(4.966334, 4.919606, 4.884236, 4.892031)
+ln_AD1 = c(4.966828, 5.195892, 5.125716, 5.054426)
+ln_AD0_se = c(0.1236772, 0.1236772, 0.1267989, 0.1267989)
+ln_AD1_se = c(0.1291767, 0.1291767, 0.1308171, 0.1375828)
+
+within_p_values_ln_AD0 = c(NA, NA, NA, NA)
+within_p_values_ln_AD1 = c(NA, 0.003, 0.045, NA)
+interaction_p_values_ln_AD = c(NA, 0.009, 0.031, NA)
+
+y_axis_p_value_locations = list(
+  ln_AD0 = c(NA, 5.35, 5.3, 5.25),
+  ln_AD1 = c(NA, 5.35, 5.3, 5.25)
+)
+
+interaction_y_location = 4.715
+y_axis_limits = c(4.7, 5.4)
+
+# Prepare dataframe
+df_IL2_Plasma = bind_rows(
+  data.frame(
+    month = months - jitter, group = "Non-AD",
+    mean = ln_AD0, se = ln_AD0_se,
+    pval = within_p_values_ln_AD0, p_y = y_axis_p_value_locations$ln_AD0,
+    tissue = "Plasma", cytokine = cytokine
+  ),
+  data.frame(
+    month = months + jitter, group = "AD",
+    mean = ln_AD1, se = ln_AD1_se,
+    pval = within_p_values_ln_AD1, p_y = y_axis_p_value_locations$ln_AD1,
+    tissue = "Plasma", cytokine = cytokine
+  )
+)
+
+df_IL2_Plasma$marker = sapply(df_IL2_Plasma$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+# Interaction data
+interaction_df_IL2_Plasma = data.frame(
+  month = months,
+  pval = interaction_p_values_ln_AD,
+  marker = sapply(interaction_p_values_ln_AD, function(p) {
+    if (is.na(p)) return(NA)
+    if (p < 0.001) return("###")
+    else if (p < 0.01) return("##")
+    else if (p < 0.05) return("#")
+    else return(NA)
+  }),
+  y = interaction_y_location,
+  tissue = "Plasma", cytokine = cytokine
+) %>% filter(!is.na(marker))
+```
+
+
+## Plasma IL-10
+
+```{r}
+cytokine = "IL-10"
+compartment = "Plasma"
+
+# Data
+months = c(0, 3, 6, 12)
+jitter = 0.15
+
+ln_AD0 = c(6.752676, 6.814111, 6.872781, 6.822019)
+ln_AD1 = c(6.768665, 7.038632, 6.994891, 6.827437)
+ln_AD0_se = c(0.2370113, 0.2370113, 0.238529, 0.238529)
+ln_AD1_se = c(0.2475503, 0.2475503, 0.2483441, 0.2516554)
+
+within_p_values_ln_AD0 = c(NA, NA, NA, NA)
+within_p_values_ln_AD1 = c(NA, 0.000, 0.003, 0.493)
+interaction_p_values_ln_AD = c(NA, 0.038, NA, NA)
+
+y_axis_p_value_locations = list(
+  ln_AD0 = c(NA, 7.33, 7.3, 7.05),
+  ln_AD1 = c(NA, 7.33, 7.3, 7.1)
+)
+
+interaction_y_location = 6.42
+y_axis_limits = c(6.4, 7.4)
+
+# Combine into data frame
+df_IL10_pmbc = bind_rows(
+  data.frame(
+    month = months - jitter, group = "Non-AD",
+    mean = ln_AD0, se = ln_AD0_se,
+    pval = within_p_values_ln_AD0, p_y = y_axis_p_value_locations$ln_AD0,
+    tissue = "Plasma", cytokine = cytokine
+  ),
+  data.frame(
+    month = months + jitter, group = "AD",
+    mean = ln_AD1, se = ln_AD1_se,
+    pval = within_p_values_ln_AD1, p_y = y_axis_p_value_locations$ln_AD1,
+    tissue = "Plasma", cytokine = cytokine
+  )
+)
+
+# Assign marker labels
+df_IL10_pmbc$marker = sapply(df_IL10_pmbc$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+# Interaction markers
+interaction_df_IL10_Plasma = data.frame(
+  month = months,
+  pval = interaction_p_values_ln_AD,
+  marker = sapply(interaction_p_values_ln_AD, function(p) {
+    if (is.na(p)) return(NA)
+    if (p < 0.001) return("###")
+    else if (p < 0.01) return("##")
+    else if (p < 0.05) return("#")
+    else return(NA)
+  }),
+  y = interaction_y_location,
+  tissue = "Plasma", cytokine = cytokine
+) %>% filter(!is.na(marker))
+```
+
+
+## Plasma IL-1β
+
+
+```{r}
+cytokine = "IL-1β"
+compartment = "Plasma"
+
+# Data
+months = c(0, 3, 6, 12)
+jitter = 0.15
+
+ln_AD0 = c(5.070, 5.236, 5.027, 4.925)
+ln_AD1 = c(5.258, 5.351, 5.962, 5.690)
+ln_AD0_se = c(0.1802, 0.1802, 0.1928, 0.1928)
+ln_AD1_se = c(0.1822, 0.1822, 0.1949, 0.2361)
+
+within_p_values_ln_AD0 = c(NA, NA, NA, NA)
+within_p_values_ln_AD1 = c(NA, NA, 0.001, 0.077)
+interaction_p_values_ln_AD = c(NA, NA, 0.009, NA)
+
+y_axis_p_value_locations = list(
+  ln_AD0 = c(NA, 5.45, 5.35, 5.25),
+  ln_AD1 = c(NA, 5.45, 6.2, 5.3)
+)
+
+interaction_y_location = 4.58
+y_axis_limits = c(4.5, 6.5)
+
+# Combine into dataframe
+df_IL1b_Plasma = bind_rows(
+  data.frame(
+    month = months - jitter, group = "Non-AD",
+    mean = ln_AD0, se = ln_AD0_se,
+    pval = within_p_values_ln_AD0, p_y = y_axis_p_value_locations$ln_AD0,
+    tissue = "Plasma", cytokine = cytokine
+  ),
+  data.frame(
+    month = months + jitter, group = "AD",
+    mean = ln_AD1, se = ln_AD1_se,
+    pval = within_p_values_ln_AD1, p_y = y_axis_p_value_locations$ln_AD1,
+    tissue = "Plasma", cytokine = cytokine
+  )
+)
+
+# Significance labels
+df_IL1b_Plasma$marker = sapply(df_IL1b_Plasma$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+# Interaction marker data
+interaction_df_IL1b_Plasma = data.frame(
+  month = months,
+  pval = interaction_p_values_ln_AD,
+  marker = sapply(interaction_p_values_ln_AD, function(p) {
+    if (is.na(p)) return(NA)
+    if (p < 0.001) return("###")
+    else if (p < 0.01) return("##")
+    else if (p < 0.05) return("#")
+    else return(NA)
+  }),
+  y = interaction_y_location,
+  tissue = "Plasma", cytokine = cytokine
+) %>% filter(!is.na(marker))
+```
+
+
+## Plasma IL6
+
+```{r}
+cytokine = "IL-6"
+compartment = "Plasma"
+
+# Data
+months = c(0, 3, 6, 12)
+jitter = 0.15
+
+ln_AD0 = c(7.890509, 7.955309, 7.764636, 7.779225)
+ln_AD1 = c(8.029719, 7.994021, 8.316568, 8.063356)
+ln_AD0_se = c(0.1396006, 0.1396006, 0.1461922, 0.1461922)
+ln_AD1_se = c(0.1458081, 0.1458081, 0.1492901, 0.1635326)
+
+within_p_values_ln_AD0 = c(NA, NA, NA, NA)
+within_p_values_ln_AD1 = c(NA, NA, 0.022, NA)
+interaction_p_values_ln_AD = c(NA, NA, 0.019, NA)
+
+y_axis_p_value_locations = list(
+  ln_AD0 = c(NA, 8.4, 8.3, 8.2),
+  ln_AD1 = c(NA, 8.4, 8.51, 8.2)
+)
+
+interaction_y_location = 7.435
+y_axis_limits = c(7.4, 8.6)
+
+# Construct data frame
+df_IL6_Plasma = bind_rows(
+  data.frame(
+    month = months - jitter, group = "Non-AD",
+    mean = ln_AD0, se = ln_AD0_se,
+    pval = within_p_values_ln_AD0, p_y = y_axis_p_value_locations$ln_AD0,
+    tissue = "Plasma", cytokine = cytokine
+  ),
+  data.frame(
+    month = months + jitter, group = "AD",
+    mean = ln_AD1, se = ln_AD1_se,
+    pval = within_p_values_ln_AD1, p_y = y_axis_p_value_locations$ln_AD1,
+    tissue = "Plasma", cytokine = cytokine
+  )
+)
+
+# Add significance markers
+df_IL6_Plasma$marker = sapply(df_IL6_Plasma$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+# Interaction markers
+interaction_df_IL6_Plasma = data.frame(
+  month = months,
+  pval = interaction_p_values_ln_AD,
+  marker = sapply(interaction_p_values_ln_AD, function(p) {
+    if (is.na(p)) return(NA)
+    if (p < 0.001) return("###")
+    else if (p < 0.01) return("##")
+    else if (p < 0.05) return("#")
+    else return(NA)
+  }),
+  y = interaction_y_location,
+  tissue = "Plasma", cytokine = cytokine
+) %>% filter(!is.na(marker))
+```
+
+## Plasma TNF-α
+
+```{r}
+months = c(0, 3, 6, 12)
+jitter = 0.15
+
+ln_AD0 = c(6.569811, 6.582087, 6.594624, 6.578251)
+ln_AD1 = c(6.697047, 6.77273, 6.846968, 6.757956)
+ln_AD0_se = c(0.0856637, 0.0856637, 0.0873798, 0.0873798)
+ln_AD1_se = c(0.0894728, 0.0894728, 0.0903735, 0.0940985)
+
+within_p_values_ln_AD0 = c(NA, NA, NA, NA)
+within_p_values_ln_AD1 = c(NA, NA, 0.002, NA)
+
+y_axis_p_value_locations = list(
+  ln_AD0 = c(NA, 7.25, 7.175, 7.05),
+  ln_AD1 = c(NA, 7.18, 6.955, 7.1)
+)
+
+# Combine data
+df_tnfa_Plasma = bind_rows(
+  data.frame(
+    month = months - jitter, group = "Non-AD",
+    mean = ln_AD0, se = ln_AD0_se,
+    pval = within_p_values_ln_AD0,
+    p_y = y_axis_p_value_locations$ln_AD0,
+    cytokine = "TNF-α", tissue = "Plasma"
+  ),
+  data.frame(
+    month = months + jitter, group = "AD",
+    mean = ln_AD1, se = ln_AD1_se,
+    pval = within_p_values_ln_AD1,
+    p_y = y_axis_p_value_locations$ln_AD1,
+    cytokine = "TNF-α", tissue = "Plasma"
+  )
+)
+
+df_tnfa_Plasma$marker = sapply(df_tnfa_Plasma$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+```
+
+
+
+
+# Merge
+
+```{r}
+# Combine all CSF and Plasma data frames
+df_all = bind_rows(
+  df_IFNg, df_IL2, df_IL10,
+  df_IFNg_Plasma, df_IL2_Plasma, df_IL10_pmbc
+)
+interaction_all = bind_rows(
+  interaction_df_IL2_Plasma,
+  interaction_df_IL10_Plasma
+)
+
+pA = ggplot(df_all, aes(x = month, y = mean, color = group, shape = group)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.5, size = 0.5) +
+  geom_point(size = 2) +
+  geom_line(aes(group = group), size = 0.6) +
+  geom_text(data = df_all %>% filter(!is.na(marker)),
+            aes(label = marker, y = p_y), size = 3, fontface = "bold", show.legend = FALSE) +
+  geom_text(data = interaction_all, aes(x = month, y = y - 0.01, label = marker),
+            inherit.aes = FALSE, size = 3, fontface = "bold", color = "black") +
+  ggh4x::facet_grid2(
+    factor(cytokine, levels = c("IFNγ", "IL-2", "IL-10")) ~ factor(tissue, levels = c("Plasma", "CSF")), 
+    scales = "free_y", independent = "y", switch = "y"
+  ) +
+  scale_color_manual(values = c("Non-AD" = "#7FABD1", "AD" = "#EC6E66")) +
+  scale_shape_manual(values = c("Non-AD" = 16, "AD" = 17)) +
+  scale_y_continuous(
+    minor_breaks = function(y) {
+      seq(floor(min(y)), ceiling(max(y)), by = 0.05)
+    },
+    guide = guide_axis(minor.ticks = TRUE)
+  ) +
+  scale_x_continuous(breaks = c(0, 3, 6, 12)) +
+  labs(x = "Month", y = "Estimated Margins of ln(Cytokine)", color = "", shape = "") +
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.7),
+    axis.text = element_text(color = "black", size = 10),
+    axis.title = element_text(color = "black", size = 11),
+    legend.position = "none",
+    strip.placement = "outside",
+    strip.text.x = element_text(size = 10),
+    strip.text.y.left = element_text(angle = 90, size = 10),
+    axis.ticks = element_line(color = "black", linewidth = 0.5),
+    axis.ticks.length = unit(0.08, "cm"),
+    axis.minor.ticks.length.y = unit(0.05, "cm"),
+  )
+
+ggsave("../outputs/Figure4 A.tiff", pA, height = 5, width = 4.1)
+```
+
+
+```{r}
+df_all = bind_rows(
+  df_IL1b_Plasma, df_IL6_Plasma, df_tnfa_Plasma
+)
+interaction_all = bind_rows(
+  interaction_df_IL1b_Plasma,
+  interaction_df_IL6_Plasma
+)
+
+pB = ggplot(df_all, aes(x = month, y = mean, color = group, shape = group)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.5, size = 0.5) +
+  geom_point(size = 2) +
+  geom_line(aes(group = group), size = 0.6) +
+  geom_text(data = df_all %>% filter(!is.na(marker)),
+            aes(label = marker, y = p_y), size = 3.5, fontface = "bold", show.legend = FALSE) +
+  geom_text(data = interaction_all, aes(x = month, y = y - 0.01, label = marker),
+            inherit.aes = FALSE, size = 3, fontface = "bold", color = "black") +
+  ggh4x::facet_grid2(
+    factor(cytokine, levels = c("IL-1β", "IL-6", "TNF-α")) ~ factor(tissue, levels = c("Plasma")), 
+    scales = "free_y", independent = "y", switch = "y"
+  ) +
+  scale_color_manual(values = c("Non-AD" = "#7FABD1", "AD" = "#EC6E66")) +
+  scale_shape_manual(values = c("Non-AD" = 16, "AD" = 17)) +
+  scale_y_continuous(
+    minor_breaks = function(y) {
+      seq(floor(min(y)), ceiling(max(y)), by = 0.05)
+    },
+    guide = guide_axis(minor.ticks = TRUE)
+  ) +
+  scale_x_continuous(breaks = c(0, 3, 6, 12)) +
+  labs(x = "Month", y = "Estimated Margins of ln(Cytokine)", color = "", shape = "") +
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.7),
+    axis.text = element_text(color = "black", size = 10),
+    axis.title = element_text(color = "black", size = 11),
+    legend.position = "right",
+    strip.placement = "outside",
+    strip.text.x = element_text(size = 10),
+    strip.text.y.left = element_text(angle = 90, size = 10),
+    axis.ticks = element_line(color = "black", linewidth = 0.5),
+    axis.ticks.length = unit(0.08, "cm"),
+    axis.minor.ticks.length.y = unit(0.05, "cm"),
+    legend.spacing.y = unit(0.05, "cm"),
+    legend.box.spacing = unit(0.2, "cm"),
+    legend.text = element_text(size = 8)
+  )
+
+ggsave("../outputs/Figure4 B.tiff", pB, height = 5, width = 3.28)
+```
+

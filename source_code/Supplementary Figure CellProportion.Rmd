@@ -1,0 +1,665 @@
+---
+title: "Supplementary Figure CellProportion"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpubr)
+library(ggsignif)
+library(stringr)
+library(tibble)
+library(openxlsx)
+```
+
+
+
+# Baseline CSF Cell Proportions by AD Status
+
+
+```{r}
+# Load data
+data_path = "../source_data/sc_L1_CountandProportionTable.xlsx"
+data = read_excel(data_path)
+data_filtered = data %>%
+  filter(tissue == "csf", treatment == "Ctrl", month == 0)
+cell_types = c("proportion_CD4_T", "proportion_CD8_T", "proportion_Mono", "proportion_DC",
+                "proportion_other_T", "proportion_NK", "proportion_other", "proportion_B")
+cell_labels = c("CD4+ T", "CD8+ T", "Mono", "DC", "other T", "NK", "other", "B")
+cell_map = setNames(cell_labels, cell_types)
+
+df_long = data_filtered %>%
+  select(AD, all_of(cell_types)) %>%
+  pivot_longer(cols = all_of(cell_types), names_to = "cell_type", values_to = "proportion") %>%
+  mutate(cell_label = cell_map[cell_type],
+         AD = factor(ifelse(AD == 0, "Non-AD", "AD"), levels = c("Non-AD", "AD")))
+
+# Non-AD 
+cell_order = df_long %>%
+  filter(AD == "Non-AD") %>%
+  group_by(cell_label) %>%
+  summarise(mean_prop = mean(proportion, na.rm = TRUE)) %>%
+  arrange(desc(mean_prop)) %>%
+  pull(cell_label)
+
+df_long$cell_label = factor(df_long$cell_label, levels = cell_order)
+
+# wilcox test
+results = df_long %>%
+  group_by(cell_label) %>%
+  summarise(
+    p_value = tryCatch({
+      wilcox.test(proportion ~ AD, exact = (length(unique(proportion)) == length(proportion) && n() < 40))$p.value
+    }, warning = function(w) {
+      wilcox.test(proportion ~ AD, exact = FALSE)$p.value
+    })
+  ) %>%
+  mutate(significance = case_when(
+    p_value < 0.001 ~ "***",
+    p_value < 0.01 ~ "**",
+    p_value < 0.05 ~ "*",
+    TRUE ~ ""
+  ))
+
+manual_brackets <- data.frame(
+  cell_label = c("DC", "other T", "NK"),
+  x_start = c(3.8, 5.8, 6.8),    # left edge of bracket (e.g., for DC)
+  x_end   = c(4.2, 6.2, 7.2),    # right edge of bracket (e.g., for DC)
+  y       = c(0.32, 0.15, 0.08), # height of bracket
+  label   = "*"
+)
+
+# Plot
+p_baseline_ad = ggplot(
+  df_long, 
+  aes(x = factor(cell_label, levels = cell_order), y = proportion, fill = AD, color = AD)) +
+  geom_boxplot(outlier.shape = NA, width = 0.6, position = position_dodge(width = 0.75), alpha = 0.6) +
+  geom_jitter(position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.75),
+              alpha = 0.6, size = 1, shape = 21) +
+  scale_fill_manual(values = c("Non-AD" = "#3D90D7", "AD" = "#FDAB9E"), name = "Disease") +
+  scale_color_manual(values = c("Non-AD" = "#3674B5", "AD" = "#B82132"), name = "Disease") +
+  geom_segment(data = manual_brackets,
+               aes(x = x_start, xend = x_end, y = y, yend = y),
+               inherit.aes = FALSE, linewidth = 0.5) +
+  geom_segment(data = manual_brackets,
+               aes(x = x_start, xend = x_start, y = y, yend = y - 0.015),
+               inherit.aes = FALSE, linewidth = 0.5) +
+  geom_segment(data = manual_brackets,
+               aes(x = x_end, xend = x_end, y = y, yend = y - 0.015),
+               inherit.aes = FALSE, linewidth = 0.5) +
+  geom_text(data = manual_brackets,
+            aes(x = (x_start + x_end) / 2, y = y + 0.015, label = label),
+            inherit.aes = FALSE, size = 5) +
+  labs(x = "Cell Type", y = "Average Cell Proportion") +
+  theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+      axis.line = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 11),
+      axis.title = element_text(color = "black", size = 11),
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm"),
+      legend.position = c(0.9, 0.9),
+      legend.justification = c(0.7, 0.8),
+      legend.background = element_rect(fill = "white"),
+      legend.key.size = unit(0.5, "cm"),
+      legend.text = element_text(size = 9),
+      legend.title = element_text(size = 10)
+    ) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.25),
+    minor_breaks = seq(0, 1, by = 0.05),
+    guide = guide_axis(minor.ticks = TRUE)
+  )
+```
+
+
+# Baseline Cell Proportions by Cell Type and Compartment
+
+
+```{r}
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(RColorBrewer)
+
+# File paths
+data_path <- "../source_data/sc_L1_CountandProportionTable.xlsx"
+# Load and filter data
+data <- read_excel(data_path)
+data_filtered <- data %>%
+  filter(tissue %in% c("csf", "pbmc"), treatment == "Ctrl", month == 0)
+
+# Define cell types and labels
+cell_types <- c("proportion_CD4_T", "proportion_CD8_T", "proportion_Mono", "proportion_DC",
+                "proportion_other_T", "proportion_NK", "proportion_other", "proportion_B")
+cell_labels <- c("CD4+ T", "CD8+ T", "Mono", "DC", "other T", "NK", "other", "B")
+cell_map <- setNames(cell_labels, cell_types)
+
+# Convert to long format
+df_long <- data_filtered %>%
+  select(tissue, all_of(cell_types)) %>%
+  pivot_longer(cols = all_of(cell_types), names_to = "cell_type", values_to = "proportion") %>%
+  mutate(cell_label = recode(cell_type, !!!cell_map),
+         tissue = recode(tissue, csf = "CSF", pbmc = "PBMC"),
+         tissue = factor(tissue, levels = c("CSF", "PBMC")))
+
+# Order by CSF mean
+cell_order <- df_long %>%
+  filter(tissue == "CSF") %>%
+  group_by(cell_label) %>%
+  summarise(mean_prop = mean(proportion, na.rm = TRUE)) %>%
+  arrange(desc(mean_prop)) %>%
+  pull(cell_label)
+
+df_long$cell_label <- factor(df_long$cell_label, levels = cell_order)
+
+# Manual significance annotations
+manual_brackets <- data.frame(
+  cell_label = c("CD8+ T", "DC", "NK", "B"),
+  x_start = c(2.8, 3.8, 6.8, 7.8),
+  x_end   = c(3.2, 4.2, 7.2, 8.2),
+  y       = c(0.37, 0.23, 0.14, 0.12),
+  label   = c("*", "*", "**", "**")
+)
+
+# Plot
+p_baseline_celltype = ggplot(df_long, aes(x = cell_label, y = proportion, fill = tissue, color = tissue)) +
+  geom_boxplot(outlier.shape = NA, width = 0.6, position = position_dodge(width = 0.75)) +
+  geom_jitter(position = position_jitterdodge(jitter.width = 0.25, dodge.width = 0.75),
+              alpha = 0.6, size = 1.2, shape = 21) +
+  geom_segment(data = manual_brackets,
+               aes(x = x_start, xend = x_end, y = y, yend = y),
+               inherit.aes = FALSE, linewidth = 0.5) +
+  geom_segment(data = manual_brackets,
+               aes(x = x_start, xend = x_start, y = y, yend = y - 0.01),
+               inherit.aes = FALSE, linewidth = 0.5) +
+  geom_segment(data = manual_brackets,
+               aes(x = x_end, xend = x_end, y = y, yend = y - 0.01),
+               inherit.aes = FALSE, linewidth = 0.5) +
+  geom_text(data = manual_brackets,
+            aes(x = (x_start + x_end)/2, y = y + 0.015, label = label),
+            inherit.aes = FALSE, size = 5) +
+  # scale_fill_manual(values = c("CSF" = "#d7bde2", "PBMC" = "#fcf3cf"), name = "Tissue") +
+  # scale_color_manual(values = c("CSF" = "#7D3C98", "PBMC" = "#B7950B"), name = "Tissue") +
+  scale_fill_manual(values = c("CSF" = "#D4BEE4", "PBMC" = "#F6E6CB"), name = "Tissue") +
+  scale_color_manual(values = c("CSF" = "#605678", "PBMC" = "#A0937D"), name = "Tissue") +
+  labs(x = "Cell Type", y = "Cell Proportion",
+       title = "Baseline Cell Proportions by Cell Type and Compartment") +
+  coord_cartesian(ylim = c(0, 1)) +
+  theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+      axis.line = element_blank(),
+      plot.title = element_text(color = "black", size = 11, hjust = 0.5),
+      plot.background = element_rect(fill = "white", color = NA),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 11),
+      axis.title = element_text(color = "black", size = 11),
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm"),
+      legend.position = c(0.9, 0.9),
+      legend.justification = c(0.7, 0.8),
+      legend.background = element_rect(fill = "white"),
+      legend.key.size = unit(0.5, "cm"),
+      legend.text = element_text(size = 9),
+      legend.title = element_text(size = 10)
+    ) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.25),
+    minor_breaks = seq(0, 1, by = 0.05),
+    guide = guide_axis(minor.ticks = TRUE)
+  )
+```
+
+
+
+# Baseline Cell Proportions by Cell Type and Compartment
+
+
+```{r}
+# Data
+data_path = "../source_data/sc_L1_CountandProportionTable.xlsx"
+data = read_excel(data_path) %>%
+  filter(tissue %in% c("csf", "pbmc"), treatment == "Ctrl", month == 0)
+cell_types = c("proportion_CD4_T", "proportion_CD8_T", "proportion_Mono", "proportion_DC",
+                "proportion_other_T", "proportion_NK", "proportion_other", "proportion_B")
+cell_labels = c("CD4+ T", "CD8+ T", "Mono", "DC", "other T", "NK", "other", "B")
+cell_map = setNames(cell_labels, cell_types)
+
+# Remove subjects without both CSF and PBMC?
+valid_subjects <- data %>%
+  group_by(donor) %>%
+  summarise(n_tissues = n_distinct(tissue)) %>%
+  filter(n_tissues == 2) %>%
+  pull(donor)
+
+# data <- data %>% filter(donor %in% valid_subjects)
+
+# Transform to long format
+df_long = data %>%
+  select(tissue, all_of(cell_types)) %>%
+  pivot_longer(cols = -tissue, names_to = "cell_type", values_to = "proportion") %>%
+  mutate(cell_label = recode(cell_type, !!!cell_map),
+         tissue = recode(tissue, csf = "CSF", pbmc = "PBMC"),
+         tissue = factor(tissue, levels = c("CSF", "PBMC")))
+
+# Order by CSF mean
+cell_order = df_long %>%
+  filter(tissue == "CSF") %>%
+  group_by(cell_label) %>%
+  summarise(mean_prop = mean(proportion, na.rm = TRUE)) %>%
+  arrange(desc(mean_prop)) %>%
+  pull(cell_label)
+
+df_long$cell_label = factor(df_long$cell_label, levels = cell_order)
+
+# Wilcoxon test
+results = df_long %>%
+  group_by(cell_label) %>%
+  wilcox_test(proportion ~ tissue, detailed = TRUE) %>%
+  mutate(significance = case_when(
+    p < 0.001 ~ "***",
+    p < 0.01 ~ "**",
+    p < 0.05 ~ "*",
+    TRUE ~ ""
+  ))
+
+
+# Manual bracket and label positions
+manual_brackets <- data.frame(
+  cell_label = c("CD8+ T", "DC", "NK", "B"),
+  x_start = c(2.9, 3.9, 6.9, 7.9),
+  x_end   = c(3.1, 4.1, 7.1, 8.1),
+  y       = c(0.39, 0.23, 0.15, 0.12),
+  label   = c("*", "*", "**", "**")
+)
+
+
+# Plot
+p_baseline_celltype = ggplot(
+  df_long, 
+  aes(x = factor(cell_label, levels = cell_order), y = proportion, 
+      fill = tissue, color = tissue)) +
+  geom_boxplot(outlier.shape = NA, width = 0.6) +
+  geom_jitter(
+    position = position_jitterdodge(jitter.width = 0.3), 
+    shape = 21,
+    size = 1, alpha = 0.7) + geom_segment(data = manual_brackets,
+                 aes(x = x_start, xend = x_end, y = y, yend = y),
+                 inherit.aes = FALSE, linewidth = 0.5) +
+    geom_segment(data = manual_brackets,
+                 aes(x = x_start, xend = x_start, y = y, yend = y - 0.01),
+                 inherit.aes = FALSE, linewidth = 0.5) +
+    geom_segment(data = manual_brackets,
+                 aes(x = x_end, xend = x_end, y = y, yend = y - 0.01),
+                 inherit.aes = FALSE, linewidth = 0.5) +
+    geom_text(data = manual_brackets,
+              aes(x = (x_start + x_end)/2, y = y + 0.015, label = label),
+              inherit.aes = FALSE, size = 5) +
+  geom_text(data = results, aes(x = cell_label, y = 1.05, label = significance),
+            inherit.aes = FALSE, size = 5) +
+  scale_fill_manual(values = c("CSF" = "#D4BEE4", "PBMC" = "#F6E6CB"), name = "Tissue") +
+  scale_color_manual(values = c("CSF" = "#605678", "PBMC" = "#A0937D"), name = "Tissue") +
+  labs(x = "Cell Type", y = "Average Cell Proportion") +
+  theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+      axis.line = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 11),
+      axis.title = element_text(color = "black", size = 11),
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm"),
+      legend.position = c(0.9, 0.9),
+      legend.justification = c(0.7, 0.8),
+      legend.background = element_rect(fill = "white"),
+      legend.key.size = unit(0.5, "cm"),
+      legend.text = element_text(size = 9),
+      legend.title = element_text(size = 10)
+    ) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.25),
+    minor_breaks = seq(0, 1, by = 0.05),
+    guide = guide_axis(minor.ticks = TRUE)
+  )
+```
+
+
+
+# Baseline Cell Proportions by Cell Type and Compartment (Stim Only)
+
+```{r}
+# Data
+data_path = "../source_data/sc_L1_CountandProportionTable.xlsx"
+data = read_excel(data_path) %>%
+  filter(tissue %in% c("csf", "pbmc"),
+         treatment == "Ctrl",
+         stim == 1,
+         month == 0)
+cell_types = c("proportion_CD4_T", "proportion_CD8_T", "proportion_Mono", "proportion_DC",
+                "proportion_other_T", "proportion_NK", "proportion_other", "proportion_B")
+cell_labels = c("CD4+ T", "CD8+ T", "Mono", "DC", "other T", "NK", "other", "B")
+cell_map = setNames(cell_labels, cell_types)
+
+df_long = data %>%
+  select(tissue, all_of(cell_types)) %>%
+  pivot_longer(cols = all_of(cell_types), names_to = "cell_type", values_to = "proportion") %>%
+  mutate(cell_label = recode(cell_type, !!!cell_map),
+         tissue = recode(tissue, csf = "CSF", pbmc = "PBMC"),
+         tissue = factor(tissue, levels = c("CSF", "PBMC")))
+
+cell_order = df_long %>%
+  filter(tissue == "CSF") %>%
+  group_by(cell_label) %>%
+  summarise(mean_prop = mean(proportion, na.rm = TRUE)) %>%
+  arrange(desc(mean_prop)) %>%
+  pull(cell_label)
+
+df_long$cell_label = factor(df_long$cell_label, levels = cell_order)
+
+# Wilcoxon test
+results = df_long %>%
+  group_by(cell_label) %>%
+  wilcox_test(proportion ~ tissue, detailed = TRUE) %>%
+  mutate(significance = case_when(
+    p < 0.001 ~ "***",
+    p < 0.01 ~ "**",
+    p < 0.05 ~ "*",
+    TRUE ~ ""
+  ))
+
+
+# Plot
+p_stim_ctrl = ggplot(
+  df_long, 
+  aes(x = factor(cell_label, levels = cell_order), y = proportion, 
+      fill = tissue, color = tissue)) +
+  geom_boxplot(outlier.shape = NA, width = 0.6) +
+  geom_jitter(
+    position = position_jitterdodge(jitter.width = 0.3), 
+    shape = 21,
+    size = 1, alpha = 0.7) +
+  geom_text(data = results, aes(x = cell_label, y = 1.05, label = significance),
+            inherit.aes = FALSE, size = 5) +
+  scale_fill_manual(values = c("CSF" = "#D4BEE4", "PBMC" = "#F6E6CB"), name = "Tissue") +
+  scale_color_manual(values = c("CSF" = "#605678", "PBMC" = "#A0937D"), name = "Tissue") +
+  labs(x = "Cell Type", y = "Average Cell Proportion") +
+  theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+      axis.line = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 11),
+      axis.title = element_text(color = "black", size = 11),
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm"),
+      legend.position = c(0.9, 0.9),
+      legend.justification = c(0.7, 0.8),
+      legend.background = element_rect(fill = "white"),
+      legend.key.size = unit(0.5, "cm"),
+      legend.text = element_text(size = 9),
+      legend.title = element_text(size = 10)
+    ) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.25),
+    minor_breaks = seq(0, 1, by = 0.05),
+    guide = guide_axis(minor.ticks = TRUE)
+  )
+```
+
+
+# Baseline Cell Proportions by Compartment
+
+```{r}
+# Load data
+data_path = "../source_data/sc_L1_CountandProportionTable.xlsx"
+data = read_xlsx(data_path)
+data_filtered = data %>%
+  filter(tissue %in% c("csf", "pbmc"),
+         treatment == "Ctrl",
+         month == 0)
+
+# Define cell types and labels
+cell_types = c("proportion_CD4_T", "proportion_CD8_T", "proportion_Mono",
+                "proportion_DC", "proportion_other_T", "proportion_NK",
+                "proportion_other", "proportion_B")
+cell_labels = c("CD4+ T", "CD8+ T", "Mono", "DC", "other T", "NK", "other", "B")
+names(cell_labels) = cell_types
+
+# Compute mean proportions and reshape
+plot_data = data_filtered %>%
+  group_by(tissue) %>%
+  summarise(across(all_of(cell_types), mean, na.rm = TRUE)) %>%
+  pivot_longer(cols = all_of(cell_types), names_to = "cell_type", values_to = "proportion") %>%
+  mutate(cell_label = cell_labels[cell_type],
+         tissue = recode(tissue, csf = "CSF Cells", pbmc = "PBMCs"))
+
+celltype_colors = c( "#ff9b9b", "#f8caa4","#fcea93","#80d5cf","#99cbf4","#caa8da","#d0859e", "#f7dfe9")
+names(celltype_colors) = c("B", "CD4+ T", "CD8+ T", "DC", "Mono", "NK", "other", "other T")
+
+# Generate stacked bar plot
+p_bar_ctrl = ggplot(plot_data, aes(x = tissue, y = proportion, fill = cell_label)) +
+  geom_bar(stat = "identity", position = "stack", color = "black", width = 0.8) +
+  geom_text(aes(label = ifelse(proportion > 0.04, sprintf("%.2f", proportion), "")),
+            position = position_stack(vjust = 0.5), size = 4, color = "black") +
+  scale_fill_manual(values = celltype_colors) +
+  labs(
+    x = "Compartment", y = "Average Cell Proportion",
+    fill = "Cell Types"
+  ) +
+  theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+      axis.line = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 11),
+      axis.title.x = element_blank(),
+      axis.title.y = element_text(color = "black", size = 11),
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm"),
+      legend.position = "right"
+    ) +
+  guides(fill = guide_legend(ncol = 2)) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.25),
+    minor_breaks = seq(0, 1, by = 0.05),
+    guide = guide_axis(minor.ticks = TRUE)
+  )
+```
+
+
+
+# CSF Cell Proportions Over Time
+
+```{r}
+# Data
+data_path = "../source_data/sc_L1_CountandProportionTable.xlsx"
+data = read_xlsx(data_path)
+csf_data = data %>% filter(tissue == "csf")
+
+# Define cell types and labels
+cell_types = c("proportion_CD4_T", "proportion_CD8_T", "proportion_Mono",
+                "proportion_DC", "proportion_other_T", "proportion_NK",
+                "proportion_other", "proportion_B")
+cell_labels = c("CD4+ T", "CD8+ T", "Mono", "DC", "other T", "NK", "other", "B")
+names(cell_labels) = cell_types
+
+# Average across all treatments for each donor and time
+grouped = csf_data %>%
+  group_by(donor, month) %>%
+  summarise(across(all_of(cell_types), mean, na.rm = TRUE), .groups = "drop")
+
+# Melt for plotting
+df_long = grouped %>%
+  pivot_longer(cols = all_of(cell_types), names_to = "cell_type", values_to = "proportion") %>%
+  mutate(cell_label = cell_labels[cell_type])
+
+# Order by median baseline (month 0)
+baseline_medians = df_long %>%
+  filter(month == 0) %>%
+  group_by(cell_label) %>%
+  summarise(median_prop = median(proportion, na.rm = TRUE)) %>%
+  arrange(desc(median_prop))
+cell_order = baseline_medians$cell_label
+
+# Plot
+p_csf_time = ggplot(
+  df_long, 
+  aes(x = factor(cell_label, levels = cell_order), y = proportion, 
+      color = factor(month), fill = factor(month))) +
+  geom_boxplot(outlier.shape = NA, width = 0.6) +
+  geom_jitter(
+    aes(fill = factor(month)), 
+    position = position_jitterdodge(jitter.width = 0.3), 
+    shape = 21,
+    size = 1, alpha = 0.7) +
+  scale_fill_manual(values = c("#C7DB9C", "#FBDB93", "#f8cbc8")) +
+  scale_color_manual(values = c("#67AE6E", "#EF9651", "#dd6b70")) +
+  labs(
+    x = "Cell Type", y = "Average Cell Proportion", fill = "Month", color = "Month"
+  ) +
+  theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+      axis.line = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 11),
+      axis.title = element_text(color = "black", size = 11),
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm"),
+      legend.position = c(0.9, 0.9),
+      legend.justification = c(0.7, 0.8),
+      legend.background = element_rect(fill = "white"),
+      legend.key.size = unit(0.5, "cm"),
+      legend.text = element_text(size = 9),
+      legend.title = element_text(size = 10)
+    ) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.25),
+    minor_breaks = seq(0, 1, by = 0.05),
+    guide = guide_axis(minor.ticks = TRUE)
+  )
+```
+
+
+# CSF Cell Proportions Over Time (basal only)
+
+```{r}
+# Data
+data_path = "../source_data/sc_L1_CountandProportionTable.xlsx"
+data = read_xlsx(data_path)
+donors_without_bcg = data %>%
+  group_by(donor) %>%
+  summarise(has_bcg = any(treatment == "BCG")) %>%
+  filter(!has_bcg) %>%
+  pull(donor)
+
+# Filter data
+data_filtered = data %>%
+  filter(tissue == "csf", treatment == "Ctrl", donor %in% donors_without_bcg)
+
+# Cell definitions
+cell_types = c("proportion_CD4_T", "proportion_CD8_T", "proportion_Mono",
+                "proportion_DC", "proportion_other_T", "proportion_NK",
+                "proportion_other", "proportion_B")
+cell_labels = c("CD4+ T", "CD8+ T", "Mono", "DC", "other T", "NK", "other", "B")
+names(cell_labels) = cell_types
+
+# Reshape
+df_long = data_filtered %>%
+  select(donor, month, all_of(cell_types)) %>%
+  pivot_longer(cols = all_of(cell_types), names_to = "cell_type", values_to = "proportion") %>%
+  mutate(cell_label = cell_labels[cell_type]) %>%
+  filter(month %in% c(0, 3, 12))
+
+# Sort by median baseline
+baseline_medians = df_long %>%
+  filter(month == 0) %>%
+  group_by(cell_label) %>%
+  summarise(median_prop = median(proportion, na.rm = TRUE)) %>%
+  arrange(desc(median_prop))
+cell_order = baseline_medians$cell_label
+
+# Plot
+p_basal_time = ggplot(
+  df_long, 
+  aes(x = factor(cell_label, levels = cell_order), y = proportion, 
+      color = factor(month), fill = factor(month))) +
+  geom_boxplot(outlier.shape = NA, width = 0.6) +
+  geom_jitter(
+    aes(fill = factor(month)), 
+    position = position_jitterdodge(jitter.width = 0.3), 
+    shape = 21,
+    size = 1, alpha = 0.7) +
+  scale_fill_manual(values = c("#C7DB9C", "#FBDB93", "#f8cbc8")) +
+  scale_color_manual(values = c("#67AE6E", "#EF9651", "#dd6b70")) +
+  labs(
+    x = "Cell Type", y = "Average Cell Proportion", fill = "Month", color = "Month"
+  ) +
+  theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+      axis.line = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 11),
+      axis.title = element_text(color = "black", size = 11),
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm"),
+      legend.position = c(0.9, 0.9),
+      legend.justification = c(0.7, 0.8),
+      legend.background = element_rect(fill = "white"),
+      legend.key.size = unit(0.5, "cm"),
+      legend.text = element_text(size = 9),
+      legend.title = element_text(size = 10)
+    ) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.25),
+    minor_breaks = seq(0, 1, by = 0.05),
+    guide = guide_axis(minor.ticks = TRUE)
+  )
+```
+
+
+# Merge
+
+```{r}
+ggarrange(
+  p_baseline_ad,
+  p_bar_ctrl,
+  p_basal_time,
+  p_csf_time,
+  p_baseline_celltype,
+  p_stim_ctrl, 
+  ncol = 2, nrow = 3
+)
+ggsave("../outputs/Supplementary Figure CellProportion.tiff", height = 8, width = 10)
+```
+
+

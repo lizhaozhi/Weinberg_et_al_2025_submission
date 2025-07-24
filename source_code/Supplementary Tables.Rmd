@@ -1,0 +1,339 @@
+---
+title: "Supplementary Tables"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(data.table)
+require(openxlsx)
+```
+
+
+# Stim
+
+## DEGs
+
+```{r}
+wb = createWorkbook()
+```
+
+
+```{r}
+degs_csf_stim = fread("../../data/DE_all_genes_stim_CSF.csv")
+degs_pbmc_stim = fread("../../data/DE_all_genes_PBMC.csv")
+
+degs_csf_stim$tissue = "CSF"
+degs_pbmc_stim$tissue = "PBMC"
+
+sel_comparisons = c(
+  sapply(c(0, 3, 12), function(x) paste0("LPS", x, "_vs_Ctrl", x)),
+  sapply(c(3, 12), function(x) paste0("LPS", x, "_vs_LPS0")),
+  sapply(c(0, 3, 12), function(x) paste0("BCG", x, "_vs_Ctrl", x)),
+  sapply(c(3, 12), function(x) paste0("BCG", x, "_vs_BCG0"))
+)
+
+sel_celltypes = c("Mono", "CD4 T", "CD8 T")
+
+degs_stim = lapply(setNames(sel_comparisons, sel_comparisons), function(sel_comparison){
+  sel_tissues = c("CSF", "PBMC")
+  degs_list = list("CSF" = degs_csf_stim, "PBMC" = degs_pbmc_stim)
+  r_tissue = lapply(setNames(sel_tissues, sel_tissues), function(sel_tissue){
+    r_celltype = lapply(setNames(sel_celltypes, sel_celltypes), function(sel_celltype){
+      addWorksheet(wb, sheetName = paste(sel_tissue, sel_celltype, sel_comparison))
+      writeData(
+        wb, 
+        sheet = paste(sel_tissue, sel_celltype, sel_comparison), 
+        x = degs_list[[sel_tissue]][celltype == sel_celltype & comparison == sel_comparison, ]
+      )
+    })
+    return(r_celltype)
+  })
+  return(r_tissue)
+})
+
+saveWorkbook(wb, "../outputs/Supplementary Tables/Supplementary Tables Stim DEGs.xlsx", overwrite = TRUE)
+```
+
+
+## Deltas
+
+```{r}
+wb = createWorkbook()
+```
+
+
+```{r}
+# Function to compute deltas
+get_deltas = function(
+    dt, tissue, delta_cut = 0.5, 
+    sel_celltype = "Mono", sel_treatment = "LPS", sel_var = "log2FoldChange"
+) {
+  # get treatment vs ctrl comparisons at time 0, 3 and 12
+  sel_comparisons = paste0(sel_treatment, c(0, 3, 12), "_vs_Ctrl", c(0, 3, 12))
+  dt = dt[comparison %in% sel_comparisons & celltype == sel_celltype & !is.na(padj), ]
+  dt[, time := ifelse(grepl("12", comparison), 12, ifelse(grepl("3", comparison), 3, 0))]
+  
+  dt = dcast(
+    dt, 
+    gene_name ~ comparison, 
+    value.var = sel_var, 
+    fill = FALSE
+  )
+  # Calculate delta
+  dt[, delta_3 := get(paste0(sel_treatment, 3, "_vs_Ctrl", 3)) - get(paste0(sel_treatment, 0, "_vs_Ctrl", 0))]
+  dt[, delta_12 := get(paste0(sel_treatment, 12, "_vs_Ctrl", 12)) - get(paste0(sel_treatment, 0, "_vs_Ctrl", 0))]
+  
+  # Up
+  dt[delta_3 > delta_cut & delta_12 > delta_cut, Change := "Sustained Up"]
+  dt[delta_3 < delta_cut & delta_3 > -delta_cut & delta_12 > delta_cut, Change := "Late Up"]
+  dt[delta_3 > delta_cut & delta_12 > -delta_cut & delta_12 < delta_cut, Change := "Early Up"]
+  # Down
+  dt[delta_3 < -delta_cut & delta_12 < -delta_cut, Change := "Sustained Down"]
+  dt[delta_3 < -delta_cut & delta_12 > -delta_cut & delta_12 < delta_cut, Change := "Early Down"]
+  dt[delta_3 > -delta_cut & delta_3 < delta_cut & delta_12 < -delta_cut, Change := "Late Down"]
+  # None
+  dt[delta_3 > -delta_cut & delta_3 < delta_cut & delta_12 > -delta_cut & delta_12 < delta_cut, Change := "None"]
+  
+  # Opposite
+  dt[delta_3 < -delta_cut & delta_12 > delta_cut, Change := "Late Up Early Down"]
+  dt[delta_3 > delta_cut & delta_12 < -delta_cut, Change := "Early Up Late Down"]
+  
+  dt[, Celltype := sel_celltype]
+  dt[, Tissue := tissue]
+  return(dt)
+}
+
+# Calculate deltas
+sel_tissues = c("CSF", "PBMC")
+degs_list = list("CSF" = degs_csf_stim, "PBMC" = degs_pbmc_stim)
+deltas_stim = lapply(setNames(sel_tissues, sel_tissues), function(sel_tissue){
+    r_celltype = lapply(setNames(sel_celltypes, sel_celltypes), function(sel_celltype){
+      sel_treatment = "LPS"
+      dt = get_deltas(
+        degs_list[[sel_tissue]], tissue = sel_tissue, delta_cut = 0.5, 
+        sel_celltype = sel_celltype, sel_treatment = sel_treatment, sel_var = "log2FoldChange"
+      )
+      addWorksheet(wb, sheetName = paste(sel_tissue, sel_celltype, sel_treatment))
+      writeData(
+        wb, 
+        sheet = paste(sel_tissue, sel_celltype, sel_treatment), 
+        x = dt
+      )
+      
+      sel_treatment = "BCG"
+      dt = get_deltas(
+        degs_list[[sel_tissue]], tissue = sel_tissue, delta_cut = 0.5, 
+        sel_celltype = sel_celltype, sel_treatment = sel_treatment, sel_var = "log2FoldChange"
+      )
+      addWorksheet(wb, sheetName = paste(sel_tissue, sel_celltype, sel_treatment))
+      writeData(
+        wb, 
+        sheet = paste(sel_tissue, sel_celltype, sel_treatment), 
+        x = dt
+      )
+    })
+    return(r_celltype)
+})
+
+saveWorkbook(wb, "../outputs/Supplementary Tables/Supplementary Tables Stim Deltas.xlsx", overwrite = TRUE)
+```
+
+
+
+# Basal
+
+## DEGs
+
+```{r}
+wb = createWorkbook()
+```
+
+
+### AD_vs_non-AD baseline all celltypes
+
+```{r}
+degs_basal = fread("../../data/DE_all_genes_basal_CSF.csv")
+degs_basal_baseline = degs_basal[coefficient == "diseaseAD", ]
+
+addWorksheet(wb, sheetName = "Basal Baseline")
+writeData(wb, sheet = "Basal Baseline", x = degs_basal_baseline)
+```
+
+
+### nonAD.time3, AD.time3
+
+```{r}
+sel_coeff = c("diseaseAD.time3", "diseaseHealthy.time3")
+degs_basal_time3 = degs_basal[coefficient %in% sel_coeff, ]
+
+addWorksheet(wb, sheetName = "Basal AD and nonAD time 3")
+writeData(wb, sheet = "Basal AD and nonAD time 3", x = degs_basal_time3)
+```
+
+
+### nonAD.time12, AD.time12
+
+```{r}
+sel_coeff = c("diseaseAD.time12", "diseaseHealthy.time12")
+degs_basal_time12 = degs_basal[coefficient %in% sel_coeff, ]
+
+addWorksheet(wb, sheetName = "Basal AD and nonAD time 12")
+writeData(wb, sheet = "Basal AD and nonAD time 12", x = degs_basal_time12)
+```
+
+
+### save tables
+
+```{r}
+saveWorkbook(wb, "../outputs/Supplementary Tables/Supplementary Tables Basal DEGs.xlsx", overwrite = TRUE)
+```
+
+
+# Stim GO enrichment for wordcloud
+
+```{r}
+generate_wordcloud = function(
+  sel_treatment, sel_database = "GO", sel_celltype = "Mono"
+){
+  if(sel_treatment == "BCG"){
+    gene_dt = bcg_dt[Celltype == sel_celltype, ]
+  }else if(sel_treatment == "LPS"){
+    gene_dt = lps_dt[Celltype == sel_celltype, ]
+  }
+  gene_dt = gene_dt[gene_dt$Change != "None", ]
+  gene_dt[, signature := ifelse(Set == "pbmcstim", "PBMC", "CSF")]
+  gene_dt[, signature := paste(signature, Change)]
+  
+  gene_groups = split(gene_dt$gene_name, gene_dt$signature)
+  
+  immune_keywords <- c("immune", "immun","macrophage", "inflamm", "cytokine", "toll", "interferon", 
+                       "antigen", "leukocyte", "trained", "innate", "adaptive", "infection")
+  
+  word_clouds = lapply(setNames(names(gene_groups),names(gene_groups)), function(group){
+    message(group)
+    genes = gene_groups[[group]]
+    
+    # Convert SYMBOL → ENTREZ
+    eg = bitr(genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+    if (is.null(eg) || nrow(eg) == 0) next
+    
+    # GO enrichment
+    if(sel_database == "GO"){
+        enrich = enrichGO(gene = eg$ENTREZID,
+                       OrgDb = org.Hs.eg.db,
+                       ont = "BP",
+                       readable = TRUE,
+                       pvalueCutoff = 0.05,
+                       qvalueCutoff = 0.2)
+    }else{
+      # To use REACTOME
+      enrich = ReactomePA::enrichPathway(
+        gene = eg$ENTREZID,
+        pvalueCutoff = 0.05,
+        readable=T
+      )
+    }
+    
+    if (is.null(enrich) || nrow(enrich@result) == 0) {
+      return(list(enrich = NULL, word_freq = NULL, p = NULL))
+    }
+  
+    # Extract and split descriptions
+    enrich_dt = as.data.table(enrich@result[enrich@result$p.adjust < 0.05 & enrich@result$qvalue < 0.2, ])
+    terms = enrich_dt$Description
+    if (is.null(terms) || length(terms) == 0) return(list(enrich = NULL, word_freq = NULL, p = NULL))
+    
+    terms = gsub("regulation of ", "", terms)
+    words = unlist(strsplit(tolower(terms), "[ ,;\\(\\)/]+"))
+    words = words[!words %in% stopwords("en")]
+    words = words[nchar(words) > 2]
+    
+    remove_paterm = c("signaling", "cycle", "for", "disease", "regulation", "cell", "process", "response", "via", "hair", "cell", "pathway", "positive", "negative", "type", "cellular", "receptor", "cells")
+    words = words[!words %in% remove_paterm]
+    if (length(words) == 0) return(list(enrich = NULL, word_freq = NULL, p = NULL))
+  
+    # Calculate word importance based on avg -log10(p.adjust) of top 3 pathways containing the word
+    enrich_dt$log10p = -log10(enrich_dt$p.adjust)
+    word_list = unique(words)
+  
+    word_stats = lapply(word_list, function(w) {
+      match_rows = grep(w, tolower(enrich_dt$Description))
+      if (length(match_rows) == 0) return(NULL)
+    
+      top_pvals = head(sort(enrich_dt$log10p[match_rows], decreasing = TRUE), 3)
+      avg_log10p = mean(top_pvals)
+      matched_paths = enrich_dt$Description[match_rows]
+      data.frame(word = w, score = avg_log10p, pathway = paste(unique(matched_paths), collapse = "; "))
+    })
+    
+    word_freq <- do.call(rbind, word_stats)
+    if (is.null(word_freq) || nrow(word_freq) == 0) return(list(enrich = NULL, word_freq = NULL, p = NULL))
+    
+    word_freq$color <- ifelse(
+      grepl(paste(immune_keywords, collapse = "|"), word_freq$word, ignore.case = TRUE),
+      "red", "black"
+    )
+    word_freq$group = group 
+  
+    word_freq$color <- ifelse(
+      grepl(paste(immune_keywords, collapse = "|"), word_freq$word, ignore.case = TRUE),
+      "red", "black"
+    )
+    word_freq$group = group
+    
+    enrich_dt_all = enrich@result
+    enrich_dt_all$group = group
+  
+    return(list(enrich = enrich_dt_all, word_freq = word_freq))
+  })
+  return(word_clouds)
+}
+
+
+# LPS
+## word freq
+wb_path = "../outputs/Figure2_LPS_wordfreq.xlsx"
+wb = createWorkbook()
+word_clouds_lps = generate_wordcloud(
+  sel_treatment = "LPS", sel_database = "GO", sel_celltype = "Mono"
+)
+word_clouds_lps_freq = Filter(Negate(is.null), lapply(word_clouds_lps, function(x) x$word_freq))
+lapply(names(word_clouds_lps_freq), function(set){
+  add_new_sheet(wb, set, word_clouds_lps_freq[[set]])
+})
+saveWorkbook(wb, wb_path, overwrite = TRUE)
+
+## enrichment
+wb_path = "../outputs/Figure2_LPS_GOBP_enrichment.xlsx"
+wb = createWorkbook()
+word_clouds_lps_enrich = Filter(Negate(is.null), lapply(word_clouds_lps, function(x) x$enrich))
+lapply(names(word_clouds_lps_enrich), function(set){
+  add_new_sheet(wb, set, word_clouds_lps_enrich[[set]])
+})
+saveWorkbook(wb, wb_path, overwrite = TRUE)
+
+
+# BCG
+## word freq
+wb_path = "../outputs/Figure2_BCG_wordfreq.xlsx"
+wb = createWorkbook()
+word_clouds_bcg = generate_wordcloud(
+  sel_treatment = "BCG", sel_database = "GO", sel_celltype = "Mono"
+)
+word_clouds_bcg_freq = Filter(Negate(is.null), lapply(word_clouds_bcg, function(x) x$word_freq))
+lapply(names(word_clouds_bcg_freq), function(set){
+  add_new_sheet(wb, set, word_clouds_bcg_freq[[set]])
+})
+saveWorkbook(wb, wb_path, overwrite = TRUE)
+
+## enrichment
+wb_path = "../outputs/Figure2_BCG_GOBP_enrichment.xlsx"
+wb = createWorkbook()
+word_clouds_bcg_enrich = Filter(Negate(is.null), lapply(word_clouds_bcg, function(x) x$enrich))
+lapply(names(word_clouds_bcg_enrich), function(set){
+  add_new_sheet(wb, set, word_clouds_bcg_enrich[[set]])
+})
+saveWorkbook(wb, wb_path, overwrite = TRUE)
+```
+

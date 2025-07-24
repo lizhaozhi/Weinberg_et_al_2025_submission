@@ -1,0 +1,370 @@
+---
+title: "Figure 1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(ggplot2)
+require(magick)
+require(gridExtra)
+require(dplyr)
+require(ggpubr)
+require(cowplot)
+```
+
+
+# Function for plot
+
+```{r}
+do_lineplot = function(
+  df, label, y_axis_limits, cytokine = "IFN-γ", stim = "hkBCG", 
+  colors = c("Non-AD" = "#3D90D7", "AD" = "#FF8383")
+){
+  # Base plot
+  p = ggplot(df, aes(x = month, y = mean, color = group)) +
+    geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.5, size = 0.9) +
+    geom_point(size = 2.2) +
+    geom_line(aes(group = group), size = 0.9) +
+    scale_y_continuous(
+      limits = y_axis_limits,
+      minor_breaks = seq(y_axis_limits[1], y_axis_limits[2], by = 0.2),
+      guide = guide_axis(minor.ticks = TRUE)
+    ) +
+    scale_x_continuous(breaks = c(0, 3, 6, 12)) +
+    labs(x = "Month", y = expression("Estimated Margins of " * log[2]*"(FC + 1)"), color = "") +
+    theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+      axis.line = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 12),
+      axis.title.x = element_text(color = "black", size = 12),
+      axis.title.y = element_text(color = "black", size = 12, hjust = 1),
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm"),
+      legend.position = "none"
+    )
+  
+  x_range = range(months)
+  y_range = y_axis_limits
+  x_text = x_range[1] + 0.9 * diff(x_range)
+  y_text = y_range[1] + 0.05 * diff(y_range)
+
+  p = p + geom_text(
+    data = df %>% filter(!is.na(marker)),
+    aes(x = month, y = p_y, label = marker, color = group),
+    size = 3.8, fontface = "bold", show.legend = FALSE
+  ) +
+    scale_color_manual(values = colors) + 
+    annotate(
+      "text",
+      x = x_text, y = y_text,
+      label = label,
+      size = 4, hjust = 1, vjust = 0
+  )
+  return(p)
+}
+
+```
+
+
+# hkBCG IFN-γ
+
+```{r}
+# Set parameters
+cytokine = "IFN-γ"
+stim = "hkBCG"
+
+# Data
+months = c(0, 3, 6, 12)
+jitter = 0.15
+
+log2fc_AD0 = c(1.0, 5.921124, 4.001882, 4.09904)
+log2fc_AD1 = c(1.0, 3.794799, 3.811777, 3.406289)
+log2fc_AD0_se = c(NA, 0.6565012, 0.7062738, 0.7062738)
+log2fc_AD1_se = c(NA, 0.719161, 0.7499412, 0.8819534)
+
+within_p_AD0 = c(0.128, 0.000, 0.000, 0.000)
+within_p_AD1 = c(0.164, 0.000, 0.001, 0.011)
+interaction_p = c(NA, 0.049, 0.867, 0.571)
+
+y_axis_limits = c(0, 7.6)
+y_axis_p_value_locations = list(
+  log2fc_AD0 = c(1.55, 6.9, 5.0, 5.2),
+  log2fc_AD1 = c(1.7, 4.8, 5.1, 5.0)
+)
+interaction_y_location = 0.2
+
+df_IFNg = bind_rows(
+  data.frame(month = months - jitter, group = "Non-AD", mean = log2fc_AD0, se = log2fc_AD0_se,
+             pval = within_p_AD0, p_y = y_axis_p_value_locations$log2fc_AD0),
+  data.frame(month = months + jitter, group = "AD", mean = log2fc_AD1, se = log2fc_AD1_se,
+             pval = within_p_AD1, p_y = y_axis_p_value_locations$log2fc_AD1)
+)
+
+df_IFNg$marker = sapply(df_IFNg$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+# Add interaction markers
+interaction_df = data.frame(
+    month = months,
+    pval = interaction_p,
+    y = interaction_y_location,
+    marker = sapply(interaction_p, function(p) {
+      if (is.na(p)) return(NA)
+      if (p < 0.001) return("###")
+      else if (p < 0.01) return("##")
+      else if (p < 0.05) return("#")
+      else return(NA)
+    })
+  ) %>% filter(!is.na(marker))
+  
+
+p_IFNg = do_lineplot(
+  df_IFNg, "IFN\u03B3", y_axis_limits, cytokine, stim, colors = c("Non-AD" = "#3D90D7", "AD" = "#FF8383")
+) +
+  geom_text(data = interaction_df,
+              aes(x = month, y = y - 0.01, label = marker),
+              inherit.aes = FALSE, size = 3, fontface = "bold", color = "black")
+```
+
+
+# LPS IL-1β
+
+```{r}
+# Set parameters
+cytokine = "IL-1β"
+stim = "LPS"
+
+# Data
+months = c(0, 3, 6, 12)
+jitter = 0.15
+
+log2fc_AD0 = c(1.0, 1.933467, 2.8666, 1.729633)
+log2fc_AD1 = c(1.0, 1.353666, 2.550739, 2.436217)
+log2fc_AD0_se = c(NA, 0.3991362, 0.4308321, 0.4308321)
+log2fc_AD1_se = c(NA, 0.4372318, 0.4568472, 0.5410921)
+
+within_p_values_AD0 = c(NA, 0.041, 0.000, 0.133)
+within_p_values_AD1 = c(NA, 0.481, 0.003, 0.016)
+interaction_p_values = c(NA, 0.393, 0.657, 0.357)
+
+y_axis_limits = c(0, 4)
+y_axis_p_value_locations = list(
+  log2fc_AD0 = c(1.55, 2.55, 3.6, 2.5),
+  log2fc_AD1 = c(1.7, 1.9, 3.3, 3.25)
+)
+interaction_y_location = 0.7
+
+df_IL1b = bind_rows(
+  data.frame(
+    month = months - jitter,
+    group = "Non-AD",
+    mean = log2fc_AD0,
+    se = log2fc_AD0_se,
+    pval = within_p_values_AD0,
+    p_y = y_axis_p_value_locations$log2fc_AD0
+  ),
+  data.frame(
+    month = months + jitter,
+    group = "AD",
+    mean = log2fc_AD1,
+    se = log2fc_AD1_se,
+    pval = within_p_values_AD1,
+    p_y = y_axis_p_value_locations$log2fc_AD1
+  )
+)
+
+df_IL1b$marker = sapply(df_IL1b$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+p_IL1b = do_lineplot(
+  df_IL1b, cytokine, y_axis_limits, cytokine, stim, colors = c("Non-AD" = "#3D90D7", "AD" = "#FF8383")
+)
+```
+
+
+# LPS IL-6
+
+```{r}
+cytokine = "IL-6"
+stim = "LPS"
+
+# Data
+months = c(0, 3, 6, 12)
+jitter = 0.15
+
+log2fc_AD0 = c(1.0, 1.837877, 2.118805, 1.147821)
+log2fc_AD1 = c(1.0, 1.196965, 2.083761, 2.520898)
+log2fc_AD0_se = c(NA, 0.379043, 0.406009, 0.406009)
+log2fc_AD1_se = c(NA, 0.4152208, 0.4318813, 0.5032622)
+
+within_p_values_AD0 = c(NA, 0.038, 0.009, 0.264)
+within_p_values_AD1 = c(NA, NA, 0.018, 0.004)
+interaction_p_values = c(NA, NA, NA, NA)
+
+y_axis_limits = c(0.5, 3.5)
+y_axis_p_value_locations = list(
+  log2fc_AD0 = c(NA, 2.4, 2.75, 2.3),
+  log2fc_AD1 = c(NA, 1.8, 2.7, 3.2)
+)
+interaction_y_location = 0.7
+
+df_IL6 = bind_rows(
+  data.frame(
+    month = months - jitter,
+    group = "Non-AD",
+    mean = log2fc_AD0,
+    se = log2fc_AD0_se,
+    pval = within_p_values_AD0,
+    p_y = y_axis_p_value_locations$log2fc_AD0
+  ),
+  data.frame(
+    month = months + jitter,
+    group = "AD",
+    mean = log2fc_AD1,
+    se = log2fc_AD1_se,
+    pval = within_p_values_AD1,
+    p_y = y_axis_p_value_locations$log2fc_AD1
+  )
+)
+
+df_IL6$marker = sapply(df_IL6$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+p_IL6 = do_lineplot(
+  df_IL6, cytokine, y_axis_limits, cytokine, stim, colors = c("Non-AD" = "#3D90D7", "AD" = "#FF8383")
+)
+```
+
+
+# LPS TNF-α
+
+```{r}
+cytokine = "TNF-α"
+stim = "LPS"
+
+# Data
+months = c(0, 3, 6, 12)
+jitter = 0.15
+
+log2fc_AD0 = c(1.0, 1.664064, 1.761511, 1.478117)
+log2fc_AD1 = c(1.0, 1.328683, 1.699136, 2.717511)
+log2fc_AD0_se = c(NA, 0.3799463, 0.4057011, 0.4057011)
+log2fc_AD1_se = c(NA, 0.4162103, 0.4321117, 0.50022)
+
+within_p_AD0 = c(NA, 0.090, 0.068, 0.251)
+within_p_AD1 = c(NA, NA, 0.116, 0.001)
+interaction_p = c(NA, NA, NA, NA)
+
+y_axis_limits = c(0.5, 4.0)
+y_axis_pval_locations = list(
+  log2fc_AD0 = c(NA, 2.5, 2.4, 2.2),
+  log2fc_AD1 = c(NA, 1.8, 2.1, 3.5)
+)
+interaction_y_location = 0.7
+
+df_TNFa = bind_rows(
+  data.frame(
+    month = months - jitter,
+    group = "Non-AD",
+    mean = log2fc_AD0,
+    se = log2fc_AD0_se,
+    pval = within_p_AD0,
+    p_y = y_axis_pval_locations$log2fc_AD0
+  ),
+  data.frame(
+    month = months + jitter,
+    group = "AD",
+    mean = log2fc_AD1,
+    se = log2fc_AD1_se,
+    pval = within_p_AD1,
+    p_y = y_axis_pval_locations$log2fc_AD1
+  )
+)
+
+df_TNFa$marker = sapply(df_TNFa$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+p_tnfa = do_lineplot(
+  df_TNFa, cytokine, y_axis_limits, cytokine, stim, colors = c("Non-AD" = "#3D90D7", "AD" = "#FF8383")
+)
+```
+
+
+# Merge
+
+```{r}
+p_all = ggarrange(
+  p_IFNg, p_IL1b, p_IL6, p_tnfa,
+  ncol = 4, nrow = 1,
+  align = "hv"
+)
+ggsave("../outputs/Figure1.tiff", height = 2.5, width = 9.6)
+```
+
+
+# Legend
+
+```{r}
+# Manually create a mini data frame for the legend
+legend_df = data.frame(
+  group = c("Non-AD", "AD"),
+  x = 1,
+  y = c(1, 2)
+)
+
+legend_plot = ggplot(legend_df, aes(x = x, y = y, color = group)) +
+  geom_line(aes(group = group), size = 1) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Non-AD" = "#3D90D7", "AD" = "#FF8383")) +
+  xlim(0.5, 1.5) + ylim(0.5, 2.5) +
+  theme_void() +
+  theme(
+    legend.position = "right",
+    legend.text = element_text(size = 10),
+    legend.title = element_blank()
+  )
+
+manual_legend = get_legend(legend_plot)
+
+p_all = plot_grid(
+  p_all,                
+  manual_legend,        
+  rel_widths = c(1, 0.2),
+  nrow = 1
+)
+```
+
+
+```{r}
+ggsave("../outputs/Figure1.tiff", p_all, height = 2.7, width = 13)
+```
+
+
+
+
+

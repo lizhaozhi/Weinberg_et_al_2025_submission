@@ -1,0 +1,395 @@
+---
+title: "Supplementary Figure AD Designation"
+output: html_document
+---
+
+
+# Boxplot Moca
+
+
+```{r}
+# Load libraries
+library(ggplot2)
+library(dplyr)
+library(magick)
+
+# Data
+df <- data.frame(
+  subject = c(
+    "242-001", "242-003", "242-004", "242-005", "242-006", "242-007", "242-008", "242-009", 
+    "242-010", "242-011", "242-013", "242-014", "242-015", "242-016", "242-018", "242-019", 
+    "2577-002", "2577-003", "2577-005", "2577-006", "2577-009", "2577-010", "2577-011"
+  ),
+  moca_scr = c(
+    29, 28, 22, 29, 28, 28, 29, 25, 29, 23, 29, 28, 24, 28, 22, 26, 13, 10, 11, 10, 17, 22, 13
+  ),
+  cluster = c(
+    1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1
+  )
+)
+
+df <- df %>%
+  mutate(group = factor(ifelse(cluster == 0, "Non-AD", "AD"), levels = c("Non-AD", "AD")))
+
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+
+# Step 1: Calculate p-value
+wilcox_res <- wilcox.test(moca_scr ~ group, data = df)
+p_val <- wilcox_res$p.value
+
+# Step 2: Prepare annotation data
+p_df <- data.frame(
+  group1 = "Non-AD",
+  group2 = "AD",
+  y.position = max(df$moca_scr) + 1,
+  p.value = p_val,
+  label = if (p_val < 0.001) "***"
+          else if (p_val < 0.01) "**"
+          else if (p_val < 0.05) "*"
+          else "ns"
+)
+
+# Step 3: Plot with p-value bracket
+p_moca = ggplot(df, aes(x = group, y = moca_scr)) +
+  geom_boxplot(
+    aes(fill = group),
+    outlier.shape = NA, width = 0.5
+  ) +
+  geom_jitter(width = 0.2, height = 0, size = 1.1, alpha = 0.6) +
+  scale_fill_manual(values = c("Non-AD" = "#3D90D7", "AD" = "#FF8383")) +
+  stat_pvalue_manual(
+    p_df,
+    label = "label",
+    tip.length = 0.01,
+    size = 6, bracket.size = 0.5
+  ) +
+  labs(
+    x = "Group",
+    y = "MoCA Score at Baseline",
+    title = "MoCA Scores"
+  ) +
+  scale_y_continuous(
+    minor_breaks = seq(10, 32, by = 2.5),
+    guide = guide_axis(minor.ticks = TRUE),
+    limits = c(10, 32),
+    labels = scales::label_number(accuracy = 0.1)
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+      axis.line = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 12),
+      axis.title.x = element_text(color = "black", size = 12),
+      axis.title.y = element_text(color = "black", size = 12, hjust = 1),
+      plot.title = element_text(color = "black", size = 12, hjust = 0.5),
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm"),
+      legend.position = "none"
+    )
+
+ggsave("../outputs/Supplementary Figure Moca Distribution.tiff", p_moca, height = 2.7, width = 2.5)
+```
+
+
+
+
+```{r}
+# Load libraries
+library(ggplot2)
+library(dplyr)
+library(magick)
+library(broom)
+
+# Data
+df <- data.frame(
+  subject = c(
+    "242-001", "242-003", "242-004", "242-005", "242-006", "242-007", "242-008", "242-009", 
+    "242-010", "242-011", "242-013", "242-014", "242-015", "242-016", "242-018", "242-019", 
+    "2577-002", "2577-003", "2577-005", "2577-006", "2577-009", "2577-010", "2577-011"
+  ),
+  ptau181_ab42 = c(
+    0.47724652, 0.127309594, 0.689849413, 0.028310005, 0.232079425, 0.027042478, 
+    0.032959744, 0.037626766, 0.048358942, 0.030542828, 0.030010354, 0.057703055, 
+    0.362444879, 0.04282357, 0.804587538, 0.048408188, 0.740160999, 0.589219529, 
+    0.653311916, 0.675397864, 0.911018392, 0.482997346, 0.4529381
+  ),
+  moca_scr = c(
+    29, 28, 22, 29, 28, 28, 29, 25, 29, 23, 29, 28, 24, 28, 22, 26, 13, 10, 11, 10, 17, 22, 13
+  ),
+  cluster = c(
+    1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1
+  )
+)
+
+# Map group
+df <- df %>% mutate(group = factor(ifelse(cluster == 0, "Non-AD", "AD"), levels = c("Non-AD", "AD")))
+
+# Linear regression
+model <- lm(ptau181_ab42 ~ moca_scr, data = df)
+r2 <- summary(model)$r.squared
+
+# Generate predicted line
+new_x <- data.frame(moca_scr = seq(min(df$moca_scr), max(df$moca_scr), length.out = 100))
+new_y <- predict(model, newdata = new_x)
+line_df <- cbind(new_x, ptau181_ab42 = new_y)
+
+# Plot
+p_C = ggplot(df, aes(x = moca_scr, y = ptau181_ab42, color = group)) +
+  geom_point(size = 2, stroke = 1, alpha = 0.7) +
+  geom_line(data = line_df, aes(x = moca_scr, y = ptau181_ab42), inherit.aes = FALSE,
+            linetype = "dashed", color = "gray40", linewidth = 1) +
+  scale_color_manual(values = c("Non-AD" = "#3D90D7", "AD" = "#FF8383")) +
+  ggplot2::annotate("text", x = 30, y = 0.8, label = paste0("R² = ", round(r2, 2)), hjust = 0, size = 4.5) +
+  labs(
+    x = "MoCA Score at Baseline",
+    y = "ptau181/Aβ42",
+    title = "MoCA vs ptau181/Aβ42",
+    color = "Group"
+  ) +
+  scale_x_reverse(
+    breaks = seq(8, 30, 4), 
+    minor_breaks = seq(8, 30, 2), 
+    guide = guide_axis(minor.ticks = TRUE),
+    limits = c(30, 8)
+  ) +
+  scale_y_continuous(
+    breaks = seq(0, 0.8, by = 0.2),
+    minor_breaks = seq(0, 0.8, by = 0.1),
+    guide = guide_axis(minor.ticks = TRUE),
+    limits = c(0, 0.9)
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+      axis.line = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 12),
+      axis.title.x = element_text(color = "black", size = 12),
+      axis.title.y = element_text(color = "black", size = 12, hjust = 0.5),
+      plot.title = element_text(color = "black", size = 12, hjust = 0.5),
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm"),
+      legend.position = "none"
+    )
+
+ggsave("../outputs/Supplementary Figure Moca vs ptau181Aβ42.tiff", p_C, height = 2.7, width = 4)
+```
+
+
+
+
+```{r}
+# Load libraries
+library(ggplot2)
+library(dplyr)
+library(magick)
+
+# Data
+df <- data.frame(
+  subject = c(
+    "242-001", "242-003", "242-004", "242-005", "242-006", "242-007", "242-008", "242-009", 
+    "242-010", "242-011", "242-013", "242-014", "242-015", "242-016", "242-018", "242-019", 
+    "2577-002", "2577-003", "2577-005", "2577-006", "2577-009", "2577-010", "2577-011"
+  ),
+  ptau181_ab42 = c(
+    0.47724652, 0.127309594, 0.689849413, 0.028310005, 0.232079425, 0.027042478, 
+    0.032959744, 0.037626766, 0.048358942, 0.030542828, 0.030010354, 0.057703055, 
+    0.362444879, 0.04282357, 0.804587538, 0.048408188, 0.740160999, 0.589219529, 
+    0.653311916, 0.675397864, 0.911018392, 0.482997346, 0.4529381
+  ),
+  cluster = c(
+    1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1
+  ),
+  moca_mci_ad = c(
+    0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1
+  ),
+  moca_scr = c(
+    29, 28, 22, 29, 28, 28, 29, 25, 29, 23, 29, 28, 24, 28, 22, 26, 13, 10, 11, 10, 17, 22, 13
+  )
+)
+
+# Define group as factor
+df <- df %>%
+  mutate(group = factor(ifelse(cluster == 0, "Non-AD", "AD"), levels = c("Non-AD", "AD")))
+
+
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+
+# Step 1: Calculate p-value
+wilcox_res <- wilcox.test(ptau181_ab42 ~ group, data = df)
+p_val <- wilcox_res$p.value
+
+# Step 2: Prepare annotation data
+p_df <- data.frame(
+  group1 = "Non-AD",
+  group2 = "AD",
+  y.position = max(df$ptau181_ab42) + 0.1,
+  p.value = p_val,
+  label = if (p_val < 0.001) "***"
+          else if (p_val < 0.01) "**"
+          else if (p_val < 0.05) "*"
+          else "ns"
+)
+
+  
+
+# Plot
+p_ptau181 = ggplot(df, aes(x = group, y = ptau181_ab42)) +
+  geom_boxplot(
+    aes(fill = group),
+    outlier.shape = NA, width = 0.5
+  ) +
+  geom_jitter(width = 0.2, height = 0, size = 1.1, alpha = 0.6) +
+  scale_fill_manual(values = c("Non-AD" = "#3D90D7", "AD" = "#FF8383")) +
+  geom_jitter(width = 0.15, alpha = 0.6, color = "black", size = 1.5) +
+  labs(
+    x = "Group",
+    y = "ptau181/Aβ42",
+    title = "ptau181/Aβ42"
+  ) +
+  stat_pvalue_manual(
+    p_df,
+    label = "label",
+    tip.length = 0.01,
+    size = 6, bracket.size = 0.5
+  ) +
+  scale_y_continuous(
+    minor_breaks = seq(0, 1.2, by = 0.125),
+    guide = guide_axis(minor.ticks = TRUE),
+    limits = c(0, 1.05)
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+      axis.line = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 12),
+      axis.title.x = element_text(color = "black", size = 12),
+      axis.title.y = element_text(color = "black", size = 12, hjust = 0.5),
+      plot.title = element_text(color = "black", size = 12, hjust = 0.5),
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm"),
+      legend.position = "none"
+    )
+
+ggsave("../outputs/Supplementary Figure ptau181Aβ42 Distribution.tiff", p_ptau181, height = 2.7, width = 2.5)
+```
+
+
+
+
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(magick)
+
+# Data setup
+df <- data.frame(
+  subject = c(
+    "242-001", "242-003", "242-004", "242-005", "242-006", "242-007", "242-008", "242-009", 
+    "242-010", "242-011", "242-013", "242-014", "242-015", "242-016", "242-018", "242-019", 
+    "2577-002", "2577-003", "2577-005", "2577-006", "2577-009", "2577-010", "2577-011"
+  ),
+  ab42 = c(
+    382.87, 550.98, 288.74, 1050.19, 391.96, 1091.5, 613.37, 724.73, 896.05, 949.7, 
+    962.6, 566.81, 268.5, 1604.34, 273.91, 330.96, 382.17, 250.3, 221.35, 133.87, 
+    238.3, 402.34, 194.18
+  ),
+  ptau181 = c(
+    182.72, 70.15, 199.19, 29.73, 90.97, 29.52, 20.22, 27.27, 43.33, 29.01, 28.89, 
+    32.71, 97.32, 68.70, 220.38, 16.02, 282.87, 147.48, 144.61, 90.42, 217.10, 194.33, 87.95
+  ),
+  cluster = c(
+    1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1
+  )
+)
+
+# Group mapping
+df <- df %>%
+  mutate(group = factor(ifelse(cluster == 0, "Non-AD", "AD"), levels = c("Non-AD", "AD")))
+
+# Linear regression
+model <- lm(ptau181 ~ ab42, data = df)
+r2 <- summary(model)$r.squared
+
+# Regression prediction line
+x_vals <- seq(min(df$ab42), max(df$ab42), length.out = 100)
+pred_df <- data.frame(ab42 = x_vals)
+pred_df$ptau181 <- predict(model, newdata = pred_df)
+
+# Plot
+p_A = ggplot(df, aes(x = ab42, y = ptau181, color = group)) +
+  geom_line(data = pred_df, aes(x = ab42, y = ptau181), inherit.aes = FALSE,
+            linetype = "dashed", color = "gray40", linewidth = 1) +
+  geom_point(size = 2, stroke = 1, alpha = 0.7) +
+  scale_color_manual(values = c("Non-AD" = "#3D90D7", "AD" = "#FF8383")) +
+  ggplot2::annotate("text", x = 1400, y = 300,
+           label = paste0("R² = ", round(r2, 2)),
+           size = 4, hjust = 0) +
+  labs(
+    x = "Aβ42 (pg/mL)",
+    y = "pTau181 (pg/mL)",
+    title = "Baseline CSF pTau181 vs Aβ42",
+    color = "Group"
+  ) +
+  scale_y_continuous(
+    minor_breaks = seq(0, 400, by = 25),
+    guide = guide_axis(minor.ticks = TRUE),
+    breaks = seq(0, 300, by = 100),
+    limits = c(-19, 320)
+  ) +
+  scale_x_continuous(
+    minor_breaks = seq(150, 1800, by = 75),
+    guide = guide_axis(minor.ticks = TRUE),
+    breaks = seq(150, 1700, by = 300),
+    limits = c(130, 1700)
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+      axis.line = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 12),
+      axis.title.x = element_text(color = "black", size = 12),
+      axis.title.y = element_text(color = "black", size = 12, hjust = 0.5),
+      plot.title = element_text(color = "black", size = 12, hjust = 0.5),
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm"),
+      legend.position = "none"
+    )
+
+ggsave("../outputs/Supplementary Figure pTau181 vs Aβ42.tiff", p_A, height = 2.7, width = 4)
+```
+
+
+
+```{r}
+ggarrange(
+  p_A, p_ptau181, p_C, p_moca,
+  ncol = 2, nrow = 2, 
+  align = "hv",
+  widths = c(1.5, 1)
+)
+
+ggsave("../outputs/Supplementary FigureAD Designation.tiff", height = 5.8, width = 8)
+```
+

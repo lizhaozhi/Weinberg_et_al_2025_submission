@@ -1,0 +1,348 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(ggplot2)
+require(magick)
+require(gridExtra)
+require(dplyr)
+require(ggpubr)
+require(cowplot)
+require(scales)
+```
+
+
+# IL-1β
+
+```{r}
+# Data
+months = c(0, 3, 6, 12)
+jitter = 0.15
+
+log2fc_AD0 = c(1.0, 1.5376, 2.534572, 1.530857)
+log2fc_AD1 = c(1.0, 1.107955, 2.113911, 0.9753498)
+log2fc_AD0_se = c(NA, 0.3332244, 0.3618798, 0.3618798)
+log2fc_AD1_se = c(NA, 0.365029, 0.3827861, 0.4593844)
+
+within_p_values_log2fc_AD0 = c(NA, 0.186, 0.000, 0.218)
+within_p_values_log2fc_AD1 = c(NA, 0.809, 0.016, 0.963)
+
+interaction_y_location = 0.6
+y_axis_limits = c(0.5, 3.0)
+
+get_marker = function(p) {
+  if (is.na(p)) return(NA)
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+}
+
+df_IL1b = rbind(
+  data.frame(
+    month = months - jitter, group = "Non-AD", 
+    mean = log2fc_AD0, se = log2fc_AD0_se, 
+    pval = within_p_values_log2fc_AD0,
+    cytokine = "IL-1β", stim = "HKCA"
+  ),
+  data.frame(
+    month = months + jitter, group = "AD", 
+    mean = log2fc_AD1, se = log2fc_AD1_se, 
+    pval = within_p_values_log2fc_AD1,
+    cytokine = "IL-1β", stim = "HKCA"
+  )
+)
+df_IL1b$marker = sapply(df_IL1b$pval, get_marker)
+
+x_range = range(months)
+y_range = y_axis_limits
+x_text = x_range[1] + 0.2 * diff(x_range)
+y_text = y_range[1] + 0.9 * diff(y_range)
+
+# Plot
+p_IL1b = ggplot(df_IL1b, aes(x = month, y = mean, color = group, shape = group)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2, size = 0.6) +
+  geom_point(size = 2) +
+  geom_line(aes(group = group), size = 0.6) +
+  geom_text(
+    data = subset(df_IL1b, !is.na(marker)), 
+    aes(label = marker, y = mean + se + 0.1), 
+    size = 3.5, fontface = "bold", show.legend = FALSE
+  ) +
+  ggplot2::annotate(
+    "text",
+    x = x_text, y = y_text,
+    label = "IL-1β",
+    size = 3.9, hjust = 1, vjust = 0
+  ) +
+  scale_color_manual(values = c("Non-AD" = "#3D90D7", "AD" = "#FF8383")) +
+  scale_shape_manual(values = c("Non-AD" = 16, "AD" = 17)) +
+  scale_y_continuous(
+      limits = y_axis_limits,
+      minor_breaks = seq(y_axis_limits[1], y_axis_limits[2], by = 0.2),
+      guide = guide_axis(minor.ticks = TRUE),
+      labels = label_number(accuracy = 0.1)
+  ) +
+  scale_x_continuous(breaks = c(0, 3, 6, 12)) + 
+  labs(x = "Month", y = expression("Estimated Margins of log"[2]*"(FC + 1)")) +
+  theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+      axis.line = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 11),
+      axis.title.x = element_text(color = "black", size = 11),
+      axis.title.y = element_text(color = "black", size = 11, hjust = 1),
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm"),
+      legend.position = "none"
+    ) 
+```
+
+
+# IL-6
+
+```{r}
+# Data
+months = c(0, 3, 6, 12)
+jitter = 0.15
+
+log2fc_AD0 = c(1.0, 1.301667, 2.417704, 1.281024)
+log2fc_AD1 = c(1.0, 1.244038, 2.07753, 1.382588)
+log2fc_AD0_se = c(NA, 0.3420611, 0.3735237, 0.3735237)
+log2fc_AD1_se = c(NA, 0.3747091, 0.3942289, 0.4790516)
+
+within_p_values_log2fc_AD0 = c(NA, 0.499, 0.003, 0.551)
+within_p_values_log2fc_AD1 = c(NA, NA, 0.033, 0.504)
+interaction_p_values_log2fc_AD = c(NA, NA, NA, NA)
+
+y_axis_p_value_locations = list(
+  log2fc_AD0 = c(NA, 2.4, 3, 2.3),
+  log2fc_AD1 = c(NA, 1.8, 2.65, 3.2)
+)
+
+df_IL6 = bind_rows(
+  data.frame(
+    month = months - jitter,
+    group = "Non-AD",
+    mean = log2fc_AD0,
+    se = log2fc_AD0_se,
+    pval = within_p_values_log2fc_AD0,
+    p_y = y_axis_p_value_locations$log2fc_AD0,
+    cytokine = "IL-6", stim = "HKCA"
+  ),
+  data.frame(
+    month = months + jitter,
+    group = "AD",
+    mean = log2fc_AD1,
+    se = log2fc_AD1_se,
+    pval = within_p_values_log2fc_AD1,
+    p_y = y_axis_p_value_locations$log2fc_AD1,
+    cytokine = "IL-6", stim = "HKCA"
+  )
+)
+
+df_IL6$marker = sapply(df_IL6$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  if (p < 0.01) return("**")
+  if (p < 0.05) return("*")
+  return(NA)
+})
+
+y_axis_limits = c(0.5, 3.5)
+
+x_range = range(months)
+y_range = y_axis_limits
+x_text = x_range[1] + 0.9 * diff(x_range)
+y_text = y_range[1] + 0.05 * diff(y_range)
+
+# Plot
+p_IL6 = ggplot(df_IL6, aes(x = month, y = mean, color = group, shape = group)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.5, size = 0.6) +
+  geom_point(size = 2) +
+  geom_line(aes(group = group), size = 0.5) +
+  geom_text(data = filter(df_IL6, !is.na(marker)), aes(label = marker, y = p_y),
+            size = 3.5, fontface = "bold", show.legend = FALSE) +
+  scale_color_manual(values = c("Non-AD" = "#3D90D7", "AD" = "#FF8383")) +
+  scale_shape_manual(values = c("Non-AD" = 16, "AD" = 17)) +
+  scale_y_continuous(
+      limits = y_axis_limits,
+      minor_breaks = seq(y_axis_limits[1], y_axis_limits[2], by = 0.2),
+      guide = guide_axis(minor.ticks = TRUE),
+      labels = label_number(accuracy = 0.1)
+  ) +
+  scale_x_continuous(breaks = c(0, 3, 6, 12)) + 
+  labs(x = "Month", y = expression("Estimated Margins of log"[2]*"(Fold Change + 1)")) +
+  theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+      axis.line = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 11),
+      axis.title = element_text(color = "black", size = 11),
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm"),
+      legend.position = "none"
+    ) +
+  ggplot2::annotate(
+    "text",
+    x = x_text, y = y_text,
+    label = "IL-6",
+    size = 3.9, hjust = 1, vjust = 0
+  )
+```
+
+
+# TNF-α
+
+```{r}
+# Define data
+months = c(0, 3, 6, 12)
+jitter = 0.15
+
+log2fc_AD0 = c(1.0, 1.094997, 1.324643, 1.12552)
+log2fc_AD1 = c(1.0, 0.968146, 1.09466, 1.244579)
+log2fc_AD0_se = c(NA, 0.1448466, 0.1568842, 0.1568842)
+log2fc_AD1_se = c(NA, 0.1586715, 0.1661266, 0.1982127)
+
+df_tnfa = bind_rows(
+  data.frame(
+    month = months - jitter, group = "Non-AD", 
+    mean = log2fc_AD0, se = log2fc_AD0_se,
+    cytokine = "TNF-α", stim = "HKCA"
+  ),
+  data.frame(
+    month = months + jitter, group = "AD", 
+    mean = log2fc_AD1, se = log2fc_AD1_se,
+    cytokine = "TNF-α", stim = "HKCA"
+  )
+)
+
+y_axis_limits = c(0.5, 2.0)
+
+x_range = range(months)
+y_range = y_axis_limits
+x_text = x_range[1] + 0.9 * diff(x_range)
+y_text = y_range[1] + 0.05 * diff(y_range)
+
+df_tnfa$group = factor(df_tnfa$group, levels = c("Non-AD", "AD"))
+
+# Plot
+p_tnfa = ggplot(df_tnfa, aes(x = month, y = mean, color = group, shape = group)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.5, size = 0.6) +
+  geom_point(size = 2) +
+  geom_line(aes(group = group), size = 0.6) +
+  scale_color_manual(values = c("Non-AD" = "#3D90D7", "AD" = "#FF8383")) +
+  scale_shape_manual(values = c("Non-AD" = 16, "AD" = 17)) +
+  scale_y_continuous(
+      limits = y_axis_limits,
+      minor_breaks = seq(y_axis_limits[1], y_axis_limits[2], by = 0.1),
+      guide = guide_axis(minor.ticks = TRUE),
+      labels = label_number(accuracy = 0.1)
+  ) +
+  scale_x_continuous(breaks = c(0, 3, 6, 12)) + 
+  coord_cartesian(ylim = y_axis_limits) +
+  labs(x = "Month", y = expression("Estimated Margins of log"[2]*"(Fold Change + 1)")) +
+  theme(
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+      axis.line = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 11),
+      axis.title = element_text(color = "black", size = 11),
+      axis.ticks.length = unit(0.15, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm"),
+      legend.position = "none"
+    ) +
+  ggplot2::annotate(
+    "text",
+    x = x_text, y = y_text,
+    label = "TNF-α",
+    size = 3.9, hjust = 1, vjust = 0
+  )
+```
+
+
+
+# Merge
+
+```{r}
+ggarrange(
+  p_IL1b, 
+  p_IL6 + theme(axis.title.y = element_blank()), 
+  p_tnfa + theme(axis.title.y = element_blank()),  
+  ncol = 3, nrow = 1, align = "hv"
+)
+ggsave("../outputs/Supplementary Figure StimHKCA.tiff", height = 2.5, width = 8)
+```
+
+
+
+```{r}
+df_all <- bind_rows(df_IL1b, df_IL6, df_tnfa)
+
+label_df <- df_all %>%
+  group_by(cytokine) %>%
+  summarise(
+    x_text = min(month) + 0.9 * diff(range(month)),
+    y_text = 0.5 + 0.9 * (3.5 - 0.5),  # adjust for your full y range
+    label = unique(cytokine)
+  )
+
+y_axis_limits_all <- c(0.5, 3.5)
+
+ggplot(df_all, aes(x = month, y = mean, color = group, shape = group)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.25, size = 0.6) +
+  geom_point(size = 2) +
+  geom_line(aes(group = group), size = 0.5) +
+  geom_text(data = subset(df_all, !is.na(marker)), 
+            aes(label = marker, y = ifelse(is.na(p_y), mean + se + 0.1, p_y)),
+            size = 3.9, fontface = "bold", show.legend = FALSE) +
+  geom_text(
+    data = label_df,
+    mapping = aes(x = x_text, y = y_text, label = label),
+    inherit.aes = FALSE,
+    hjust = 1, vjust = 0,
+    size = 4
+  ) +
+  scale_color_manual(values = c("Non-AD" = "#3D90D7", "AD" = "#FF8383")) +
+  scale_shape_manual(values = c("Non-AD" = 16, "AD" = 17)) +
+  scale_y_continuous(
+    limits = y_axis_limits_all,
+    minor_breaks = seq(y_axis_limits_all[1], y_axis_limits_all[2], by = 0.2),
+    guide = guide_axis(minor.ticks = TRUE),
+    labels = label_number(accuracy = 0.1)
+  ) +
+  scale_x_continuous(breaks = c(0, 3, 6, 12)) + 
+  labs(
+    x = "Month",
+    y = expression("Estimated Margins of log"[2]*"(FC + 1)")
+  ) +
+  facet_wrap(~cytokine, scales = "free_y", nrow = 1) +
+  theme(
+    panel.background = element_blank(),
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.83),
+    axis.line = element_blank(),
+    plot.background = element_rect(fill = "white", color = NA),
+    axis.ticks = element_line(color = "black", linewidth = 0.5),
+    axis.text = element_text(color = "black", size = 11),
+    axis.title = element_text(color = "black", size = 11),
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.minor.ticks.length.y = unit(0.05, "cm"),
+    legend.position = "none",
+    strip.text = element_blank()
+  )
+ggsave("../outputs/Supplementary Figure StimHKCA.tiff", height = 2.5, width = 8)
+```
+

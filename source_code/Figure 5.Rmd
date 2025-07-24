@@ -1,0 +1,563 @@
+---
+title: "Figure 5"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(ggplot2)
+require(dplyr)
+require(tibble)
+require(grid)
+require(gridExtra)
+```
+
+## CSF Aβ42/40
+
+```{r}
+# Data setup
+months = c(0, 3, 12)
+jitter = 0.15
+
+csf_AD0 = c(0.0605701, 0.0572443, 0.0524456)
+csf_AD1 = c(0.0276862, 0.0271401, 0.0275562)
+csf_AD0_se = c(0.0031768, 0.0032022, 0.003289)
+csf_AD1_se = c(0.003318, 0.003318, 0.0034451)
+
+p_values_AD0 = c(NA, 0.020, 0.000)
+p_values_AD1 = c(NA, 0.702, 0.939)
+interaction_p_values = c(NA, 0.168, 0.001)
+
+y_axis_p_value_locations = list(
+  AD0 = c(NA, 0.062, 0.0575),
+  AD1 = c(NA, 0.028, 0.028)
+)
+
+interaction_y_location = 0.02
+y_axis_limits = c(0.01, 0.07)
+
+df_ab4240_csf = bind_rows(
+  tibble(
+    month = months - jitter,
+    group = "Non-AD",
+    mean = csf_AD0,
+    se = csf_AD0_se,
+    pval = p_values_AD0,
+    p_y = y_axis_p_value_locations$AD0,
+    tissue = "CSF", cytokine = "Aβ42/40"
+  ),
+  tibble(
+    month = months + jitter,
+    group = "AD",
+    mean = csf_AD1,
+    se = csf_AD1_se,
+    pval = p_values_AD1,
+    p_y = y_axis_p_value_locations$AD1,
+    tissue = "CSF", cytokine = "Aβ42/40"
+  )
+)
+
+df_ab4240_csf$marker = sapply(df_ab4240_csf$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+interaction_df_ab4240_csf = tibble(
+  month = months,
+  pval = interaction_p_values,
+  y = interaction_y_location,
+  marker = sapply(interaction_p_values, function(p) {
+    if (is.na(p)) return(NA)
+    if (p < 0.001) return("###")
+    else if (p < 0.01) return("##")
+    else if (p < 0.05) return("#")
+    else return(NA)
+  }),
+  tissue = "CSF", cytokine = "Aβ42/40"
+) %>% filter(!is.na(marker))
+```
+
+
+## Plasma Aβ42/40
+
+```{r}
+# Data
+months = c(0, 3, 6, 12)
+jitter = 0.15
+
+plasma_AD0 = c(0.0583042, 0.060718, 0.0616505, 0.0620428)
+plasma_AD1 = c(0.0483008, 0.0492694, 0.049871, 0.0481358)
+plasma_AD0_se = c(0.0021166, 0.0021166, 0.0021772, 0.0021772)
+plasma_AD1_se = c(0.0022107, 0.0022107, 0.0022426, 0.0023739)
+
+p_values_AD0 = c(NA, 0.072, 0.020, 0.009)
+p_values_AD1 = c(NA, 0.490, 0.280, 0.920)
+interaction_p_values = c(NA, 0.457, 0.385, 0.074)
+
+y_axis_p_value_locations = list(
+  AD0 = c(NA, 0.064, 0.0645, 0.065),
+  AD1 = c(NA, 0.049, 0.05, 0.048)
+)
+
+interaction_y_location = 0.043
+y_axis_limits = c(0.040, 0.07)
+
+# Create dataframe
+df_ab4240_Plasma = bind_rows(
+  tibble(
+    month = months - jitter,
+    group = "Non-AD",
+    mean = plasma_AD0,
+    se = plasma_AD0_se,
+    pval = p_values_AD0,
+    p_y = y_axis_p_value_locations$AD0,
+    tissue = "Plasma", cytokine = "Aβ42/40"
+  ),
+  tibble(
+    month = months + jitter,
+    group = "AD",
+    mean = plasma_AD1,
+    se = plasma_AD1_se,
+    pval = p_values_AD1,
+    p_y = y_axis_p_value_locations$AD1,
+    tissue = "Plasma", cytokine = "Aβ42/40"
+  )
+)
+
+df_ab4240_Plasma$marker = sapply(df_ab4240_Plasma$pval, function(p) {
+  if (is.na(p)) return(NA)
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+interaction_df_ab4240_Plasma = tibble(
+  month = months,
+  pval = interaction_p_values,
+  y = interaction_y_location,
+  marker = sapply(interaction_p_values, function(p) {
+    if (is.na(p)) return(NA)
+    else if (p < 0.001) return("###")
+    else if (p < 0.01) return("##")
+    else if (p < 0.05) return("#")
+    else return(NA)
+  }),
+  tissue = "Plasma", cytokine = "Aβ42/40"
+) %>% filter(!is.na(marker))
+```
+
+
+## CSF Aβ42
+
+```{r}
+# Set up data
+months = c(0, 3, 12)
+jitter = 0.15
+
+csf_AD0 = c(811.0992, 746.5032, 571.3578)
+csf_AD1 = c(276.0482, 274.2373, 277.7266)
+csf_AD0_se = c(77.53405, 78.15711, 80.28895)
+csf_AD1_se = c(80.98168, 80.98168, 84.09963)
+
+p_values_AD0 = c(NA, 0.064, 0.000)
+p_values_AD1 = c(NA, 0.959, 0.968)
+interaction_p_values = c(NA, 0.203, 0.000)
+
+y_axis_p_value_locations = list(
+  AD0 = c(NA, 760, 680),
+  AD1 = c(NA, 280, 280)
+)
+
+interaction_y_location = 1
+y_axis_limits = c(0, 1000)
+
+# Build dataframe
+df_ab42_csf = bind_rows(
+  tibble(month = months - jitter, group = "Non-AD", 
+         mean = csf_AD0, se = csf_AD0_se, 
+         pval = p_values_AD0, p_y = y_axis_p_value_locations$AD0,
+         tissue = "CSF", cytokine = "Aβ42"),
+  tibble(month = months + jitter, group = "AD", 
+         mean = csf_AD1, se = csf_AD1_se, 
+         pval = p_values_AD1, p_y = y_axis_p_value_locations$AD1,
+         tissue = "CSF", cytokine = "Aβ42")
+)
+
+df_ab42_csf$marker = sapply(df_ab42_csf$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+interaction_df_ab42_csf = tibble(
+  month = months,
+  pval = interaction_p_values,
+  marker = sapply(interaction_p_values, function(p) {
+    if (is.na(p)) return(NA)
+    if (p < 0.001) return("###")
+    else if (p < 0.01) return("##")
+    else if (p < 0.05) return("#")
+    else return(NA)
+  }),
+  y = interaction_y_location,
+  tissue = "CSF", cytokine = "Aβ42"
+) %>% filter(!is.na(marker))
+```
+
+
+
+## Plasma Aβ42
+
+```{r}
+# Data
+months = c(0, 3, 6, 12)
+jitter = 0.15
+
+plasma_AD0 = c(6.209395, 6.560551, 6.85432, 6.933761)
+plasma_AD1 = c(5.603251, 5.651607, 5.501959, 5.287381)
+plasma_AD0_se = c(0.3318733, 0.3318733, 0.3437813, 0.3437813)
+plasma_AD1_se = c(0.3466304, 0.3466304, 0.3529039, 0.3786556)
+
+p_values_AD0 = c(NA, 0.139, 0.011, 0.004)
+p_values_AD1 = c(NA, 0.845, 0.693, 0.278)
+interaction_p_values = c(NA, 0.378, 0.039, 0.007)
+
+y_axis_p_value_locations = list(
+  AD0 = c(NA, 6.6, 7.3, 7.4),
+  AD1 = c(NA, 5.7, 5.5, 5.3)
+)
+
+y_axis_limits = c(4.5, 8)
+interaction_y_location = 4.6
+
+# Prepare data frame
+df_ab42_Plasma = bind_rows(
+  data.frame(
+    month = months - jitter, group = "Non-AD",
+    mean = plasma_AD0, se = plasma_AD0_se,
+    pval = p_values_AD0, p_y = y_axis_p_value_locations$AD0,
+    tissue = "Plasma", cytokine = "Aβ42"
+  ),
+  data.frame(
+    month = months + jitter, group = "AD",
+    mean = plasma_AD1, se = plasma_AD1_se,
+    pval = p_values_AD1, p_y = y_axis_p_value_locations$AD1,
+    tissue = "Plasma", cytokine = "Aβ42"
+  )
+)
+
+df_ab42_Plasma$marker = sapply(df_ab42_Plasma$pval, function(p) {
+  if (is.na(p)) return(NA)
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return(NA)
+})
+
+interaction_df_ab42_Plasma = data.frame(
+  month = months,
+  pval = interaction_p_values,
+  marker = sapply(interaction_p_values, function(p) {
+    if (is.na(p)) return(NA)
+    if (p < 0.001) return("###")
+    else if (p < 0.01) return("##")
+    else if (p < 0.05) return("#")
+    else return(NA)
+  }),
+  y = interaction_y_location,
+  tissue = "Plasma", cytokine = "Aβ42"
+) %>% filter(!is.na(marker))
+```
+
+
+
+# AB
+
+```{r}
+# Define color and shape mappings
+color_map = c("Non-AD" = "#7FABD1", "AD" = "#EC6E66")
+shape_map = c("Non-AD" = 16, "AD" = 17)
+
+# Define a function to generate individual plots
+make_plot = function(df, interaction_df, y_axis_limits, tissue, scale_y = F, scale_num = 100) {
+  if(scale_y){
+    p = ggplot(df, aes(x = month, y = mean * scale_num, color = group, shape = group)) +
+      geom_text(data = df %>% filter(!is.na(marker)),
+              aes(label = marker, y = p_y * scale_num), size = 3, fontface = "bold", show.legend = FALSE) +
+      geom_text(data = interaction_df,
+              aes(x = month, y = (y - 0.01) * scale_num, label = marker),
+              inherit.aes = FALSE, size = 3, fontface = "bold", color = "black") +
+      geom_errorbar(aes(ymin = (mean - se) * scale_num, ymax = (mean + se) * scale_num), 
+                    width = 0.5, size = 0.5)
+  }else{
+    p = ggplot(df, aes(x = month, y = mean, color = group, shape = group)) +
+      geom_text(data = df %>% filter(!is.na(marker)),
+              aes(label = marker, y = p_y), size = 3, fontface = "bold", show.legend = FALSE) +
+      geom_text(data = interaction_df,
+              aes(x = month, y = y - 0.01, label = marker),
+              inherit.aes = FALSE, size = 3, fontface = "bold", color = "black") +
+      geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.5, size = 0.5)
+  }
+  
+  ylab = "Estimated Margins of Mean"
+  p = p +
+    geom_point(size = 2) +
+    geom_line(aes(group = group), size = 0.6) +
+    scale_color_manual(values = color_map) +
+    scale_shape_manual(values = shape_map) +
+    scale_x_continuous(breaks = c(0, 3, 6, 12)) +
+    scale_y_continuous(
+      limits = y_axis_limits
+    ) + 
+    labs(x = "Month", y = ylab, title = paste(tissue, unique(df$cytokine))) +
+    theme_minimal(base_size = 10) +
+    theme(
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.7),
+      axis.text = element_text(color = "black", size = 10),
+      plot.title = element_text(color = "black", size = 12, hjust = 0.5), 
+      axis.title = element_text(color = "black", size = 12),
+      legend.position = "none",
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      axis.ticks.length = unit(0.08, "cm"),
+      axis.minor.ticks.length.y = unit(0.05, "cm")
+    )
+}
+
+
+# Split data
+df_ab42_csf_plot = make_plot(
+  df_ab42_csf,
+  interaction_df_ab42_csf,
+  y_axis_limits = c(0, 1000),
+  tissue = "CSF"
+)
+
+df_ab42_plasma_plot = make_plot(
+  df_ab42_Plasma,
+  interaction_df_ab42_Plasma,
+  y_axis_limits = c(4.59, 8),
+  tissue = "Plasma"
+)
+
+df_ab4240_csf_plot = make_plot(
+  df_ab4240_csf,
+  interaction_df_ab4240_csf,
+  y_axis_limits = c(0.01, 0.07),
+  tissue = "CSF"
+)
+
+df_ab4240_plasma_plot = make_plot(
+  df_ab4240_Plasma,
+  interaction_df_ab4240_Plasma,
+  y_axis_limits = c(0.045, 0.066),
+  tissue = "Plasma"
+)
+
+
+# Combine using ggarrange
+ggarrange(
+  df_ab42_csf_plot + theme(axis.title.x = element_blank(), axis.title.y = element_text(color = "black", size = 12, vjust = -1)), 
+  NULL,
+  df_ab42_plasma_plot + theme(axis.title.y = element_blank(),axis.title.x = element_blank()), 
+  
+  NULL, NULL, NULL,
+  
+  df_ab4240_csf_plot + theme(axis.title.y = element_text(color = "black", size = 12, vjust = -1)), 
+  NULL,
+  df_ab4240_plasma_plot + theme(axis.title.y = element_blank()), 
+  ncol = 3, nrow = 3, align = "hv",
+  widths = c(1, -0.1, 1),
+  heights = c(1, -0.1, 1)
+)
+ggsave("../outputs/Figure5 AB.tiff", height = 4.5, width = 4.9)
+```
+
+
+
+# C
+
+```{r}
+# Data
+months = c(0, 3, 12)
+x = seq_along(months)
+bar_width = 0.35
+
+means_ad0 = c(131.26, 114.88, 81.11)
+means_ad1 = c(51.07, 51.37, 55.47)
+se_ad0 = c(12.91, 13.03, 13.44)
+se_ad1 = c(13.48, 13.48, 14.08)
+
+# Significance markers
+markers_within = list(
+  `3_ad0` = "**",
+  `12_ad0` = "***"
+)
+markers_interaction = list(
+  `12` = "###"
+)
+
+# Data
+months = c(0, 3, 12)
+x_vals = factor(months)
+bar_width = 0.7
+
+df = data.frame(
+  month = rep(x_vals, 2),
+  group = rep(c("Non-AD", "AD"), each = length(months)),
+  mean = c(131.26, 114.88, 81.11, 51.07, 51.37, 55.47),
+  se = c(12.91, 13.03, 13.44, 13.48, 13.48, 14.08)
+)
+
+# Significance markers
+sig_text = data.frame(
+  month = factor(c(3, 12, 12)),
+  group = c("Non-AD", "Non-AD", "AD"),
+  label = c("**", "***", "###"),
+  y = c(114.88 + 13.03 + 5, 81.11 + 13.44 + 5, 4.7),
+  hjust = 0.5,
+  color = c("#7FABD1", "#7FABD1", "black"),
+  fontface = c("bold", "bold", "bold")
+)
+
+# Plot
+ggplot(df, aes(x = month, y = mean, fill = factor(group, levels = c("Non-AD", "AD")))) +
+  geom_bar(stat = "identity", position = position_dodge(width = bar_width), 
+           width = bar_width, color = "black", size = 0.3) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se),
+                position = position_dodge(width = bar_width), 
+                width = 0.1, linewidth = 0.4) +
+  geom_text(data = sig_text, 
+            aes(x = month, y = y, label = label, fontface = fontface), color = "black",
+            inherit.aes = FALSE, size = 3.5, show.legend = FALSE) +
+  scale_fill_manual(values = c("Non-AD" = "#7FABD1", "AD" = "#EC6E66")) +
+  scale_color_identity() +
+  labs(x = "Month", y = "CSF/Plasma Aβ42 Ratio", fill = "") +
+  theme_minimal(base_size = 13) +
+  scale_y_continuous(
+    minor_breaks = seq(0, 150, by = 10),
+    guide = guide_axis(minor.ticks = TRUE)
+  ) +
+  theme(
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.9),
+    axis.text = element_text(color = "black", size = 12.5),
+    axis.title.y = element_text(color = "black", size = 15, vjust = 0.5, hjust = 1),
+    axis.title.x = element_text(color = "black", size = 15),
+    legend.position = "none",
+    strip.placement = "outside",
+    axis.ticks = element_line(color = "black", linewidth = 0.5),
+    axis.ticks.length = unit(0.08, "cm"),
+    axis.minor.ticks.length.y = unit(0.05, "cm"),
+    legend.text = element_text(size = 10, color = "black")
+  )
+ggsave("../outputs/Figure5 C.tiff", height = 2.7, width = 3.25)
+```
+
+
+
+
+# D
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(grid)
+library(magick)
+
+# Data
+months <- c(0, 3, 12)
+group <- c("MoCA > 25", "MoCA ≤ 25")
+
+means <- data.frame(
+  month = rep(months, 2),
+  group = rep(group, each = length(months)),
+  mean = c(125.542, 106.877, 77.1411, 62.988, 63.726, 64.000),
+  se = c(14.970, 15.112, 15.412, 14.332, 14.332, 15.073)
+)
+
+# Significance markers
+markers_within <- tribble(
+  ~month, ~group,        ~marker,
+  3,      "MoCA > 25",   "**",
+  12,     "MoCA > 25",   "***",
+  3,      "MoCA ≤ 25",   NA,
+  12,     "MoCA ≤ 25",   NA
+)
+
+markers_interaction <- tibble(
+  month = c(3, 12),
+  marker = c("#", "###")
+)
+
+# Merge marker text
+means <- left_join(means, markers_within, by = c("month", "group"))
+
+# Bar width and positions
+bar_width <- 0.8
+means <- means %>%
+  mutate(
+    xpos = as.numeric(factor(month)) +
+      ifelse(group == "MoCA > 25", -bar_width / 2, bar_width / 2)
+  )
+
+# Base plot
+p <- ggplot(means, aes(x = factor(month), y = mean, fill = group)) +
+  geom_bar(aes(group = group), stat = "identity", position = position_dodge(width = bar_width), width = bar_width, color = "black") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), 
+                width = 0.15, position = position_dodge(width = bar_width), linewidth = 0.5) +
+  scale_fill_manual(values = c("MoCA > 25" = "#7FABD1", "MoCA ≤ 25" = "#EC6E66")) +
+  labs(x = "Month", y = "CSF/Plasma Aβ42 Ratio") +
+  theme_minimal(base_size = 9) +
+  scale_y_continuous(
+    minor_breaks = seq(0, 150, by = 10),
+    guide = guide_axis(minor.ticks = TRUE),
+    limits = c(0, 150)
+  ) +
+  theme(
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.9),
+    axis.text = element_text(color = "black", size = 12.5),
+    axis.title.y = element_text(color = "black", size = 15, vjust = 0.5, hjust = 1),
+    axis.title.x = element_text(color = "black", size = 15),
+    legend.position = "none",
+    strip.placement = "outside",
+    axis.ticks = element_line(color = "black", linewidth = 0.5),
+    axis.ticks.length = unit(0.08, "cm"),
+    axis.minor.ticks.length.y = unit(0.05, "cm"),
+    legend.text = element_text(size = 10, color = "black")
+  )
+
+# Add asterisks
+p <- p + geom_text(
+  data = means %>% filter(!is.na(marker)),
+  aes(label = marker, y = mean + se + 5, x = factor(month)),
+  position = position_dodge(width = bar_width),
+  color = "black",
+  size = 3,
+  fontface = "bold",
+  vjust = 0
+)
+
+# Add pound signs for interaction
+p + geom_text(
+  data = markers_interaction,
+  aes(x = factor(month), y = 4.7, label = marker),
+  inherit.aes = FALSE,
+  size = 3,
+  fontface = "bold",
+  color = "black",
+  label.padding = unit(0.15, "lines"),
+  label.size = 0,
+  fill = "white"
+)
+
+ggsave("../outputs/Figure5 D.tiff", height = 2.9, width = 3.4)
+```
+

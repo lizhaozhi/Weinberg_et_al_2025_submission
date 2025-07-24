@@ -1,0 +1,808 @@
+---
+title: "Figure2_2dvolcano"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(tidyverse)
+require(ggrepel)
+require(data.table)
+require(openxlsx)
+require(ComplexUpset)
+require(ggpubr)
+require(grid)
+require(cowplot)
+```
+
+
+# 2D volcano plot: Monocytes - CSF stim - LPS - Delta - 3 mo vs 12 mo
+
+```{r}
+delta_cut = 0.5
+
+# Load data
+de_data = fread("../source_data/DE_all_genes_stim_CSF.csv")
+
+# Filter monocyte data and valid p-values
+monocyte_data = de_data %>%
+  filter(celltype == "Mono", pvalue > 0, !gene_name %in% c("TNC", "SERPINB2")) %>%
+  filter(comparison %in% c("LPS0_vs_Ctrl0", "LPS3_vs_Ctrl3", "LPS12_vs_Ctrl12")) %>%
+  mutate(log_pvalue = -log10(pvalue)) %>%
+  drop_na(log_pvalue)
+
+# Pivot and calculate deltas
+pivot_df = monocyte_data %>%
+  dplyr::select(gene_name, comparison, log2FoldChange) %>%
+  pivot_wider(names_from = comparison, values_from = log2FoldChange) %>%
+  drop_na() %>%
+  mutate(
+    Delta_log2FC_3mo = LPS3_vs_Ctrl3 - LPS0_vs_Ctrl0,
+    Delta_log2FC_12mo = LPS12_vs_Ctrl12 - LPS0_vs_Ctrl0
+  )
+
+# Highlighted genes
+highlight_genes = c("TNF", "IL1B", "IL6", "IDO2", "PTGS2", "LAMP3", "INHBA", "IFNB1", "CCL4", "RAB7B", "IL10RA")
+
+pivot_df = pivot_df %>%
+  mutate(
+    highlight = if_else(gene_name %in% highlight_genes, "yes", "no"),
+    label = if_else(highlight == "yes", gene_name, NA)
+  )
+
+# Classify high vs low effect
+pivot_df = pivot_df %>%
+  mutate(effect_group = case_when(
+    abs(Delta_log2FC_3mo) < 0.5 & abs(Delta_log2FC_12mo) < 0.5 ~ "low",
+    TRUE ~ "high"
+  ))
+
+# Plot
+p = ggplot(pivot_df, aes(x = Delta_log2FC_3mo, y = Delta_log2FC_12mo)) +
+  geom_point(
+    data = subset(pivot_df, effect_group == "high" & highlight == "no"),
+    color = "#E49CA5", fill = "#E49CA5", alpha = 0.6, size = 1.8, shape = 21, stroke = 0.3
+  ) +
+  geom_point(
+    data = subset(pivot_df, highlight == "yes"),
+    aes(x = Delta_log2FC_3mo, y = Delta_log2FC_12mo),
+    color = "darkred", fill = "#E49CA5", shape = 21, size = 1.8, stroke = 0.7
+  ) +
+  geom_point(
+    data = subset(pivot_df, effect_group == "low" & highlight == "no"),
+    color = "gray20", fill = "gray80", alpha = 0.25, size = 1.8, shape = 21, stroke = 0.2
+  ) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray30", linewidth = 0.5) +
+  ggrepel::geom_text_repel(
+    data = subset(pivot_df, highlight == "yes"),
+    aes(label = label),
+    size = 4.5,
+    fontface = "bold",
+    color = "black",
+    box.padding = 0.3,
+    segment.color = "black"
+  ) +
+  # Axes and thresholds
+  geom_hline(yintercept = 0, color = "black", linewidth = 0.4) +
+  geom_vline(xintercept = 0, color = "black", linewidth = 0.4) +
+  geom_hline(yintercept = c(-0.5, 0.5), color = "gray40", linetype = "dashed", linewidth = 0.3) +
+  geom_vline(xintercept = c(-0.5, 0.5), color = "gray40", linetype = "dashed", linewidth = 0.3) +
+  # Labels
+  labs(
+    x = expression(Delta~log[2]*"FC from Baseline (3mo)"),
+    y = expression(Delta~log[2]*"FC from Baseline (12mo)")
+  ) +
+  # Minimal, clean theme like the flow plot
+  theme_minimal(base_size = 15) +
+  theme(
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    axis.line = element_blank(),
+    plot.background = element_rect(fill = "white", color = NA),
+    axis.ticks = element_line(color = "black", linewidth = 0.5),
+    axis.text = element_text(color = "black", size = 15),
+    axis.title.y = element_text(face = "bold", size = 14, hjust = -4),
+    axis.title.x = element_text(face = "bold", size = 14, hjust = 0.5),
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.minor.ticks.length.x = unit(0.05, "cm"),
+    axis.minor.ticks.length.y = unit(0.05, "cm")
+  ) +
+  scale_y_continuous(
+    breaks = c(-2, 0, 2, 4), 
+    limits = c(-2.5, 4.5),
+    minor_breaks = seq(-2.5, 4.5, by = 0.25),
+    guide = guide_axis(minor.ticks = TRUE)
+  ) +
+  scale_x_continuous(
+    breaks = c(-2, 0, 2, 4), 
+    limits = c(-2.5, 4.5),
+    minor_breaks = seq(-2.5, 4.5, by = 0.25),
+    guide = guide_axis(minor.ticks = TRUE)
+  ) +
+  coord_equal()
+
+ggsave("../outputs/Fig2_delta_3vs12.png", p, width = 3.5, height = 3.5, dpi = 300)
+```
+
+
+# Monocytes - LPS - Delta - PBMC vs CSF
+
+## 2D volcano plot
+
+```{r}
+delta_cut = 0.5
+# Load data
+csf_dt = fread("../source_data/DE_all_genes_stim_CSF.csv")
+pbmc_dt = fread("../source_data/DE_all_genes_PBMC.csv")
+
+x_axis_limits = c(-4, 6)
+y_axis_limits = c(-2.5, 6)
+
+# Filter monocytes with valid p-values
+csf_dt = csf_dt[celltype == "Mono" & pvalue > 0]
+pbmc_dt = pbmc_dt[celltype == "Mono" & pvalue > 0]
+
+# Function to compute deltas
+get_deltas = function(dt, timepoints, label) {
+  ddt = dcast(
+    dt[comparison %in% timepoints],
+    gene_name ~ comparison,
+    value.var = "log2FoldChange"
+  )[, paste0("delta_", label) := get(timepoints[2]) - get(timepoints[1])][,
+    c("gene_name", paste0("delta_", label)), with = F]
+  return(ddt)
+}
+
+# Calculate deltas
+csf_delta_12 = get_deltas(csf_dt, c("LPS0_vs_Ctrl0", "LPS12_vs_Ctrl12"), "CSF_12mo")
+pbmc_delta_12 = get_deltas(pbmc_dt, c("LPS0_vs_Ctrl0", "LPS12_vs_Ctrl12"), "PBMC_12mo")
+csf_delta_3 = get_deltas(csf_dt, c("LPS0_vs_Ctrl0", "LPS3_vs_Ctrl3"), "CSF_3mo")
+pbmc_delta_3 = get_deltas(pbmc_dt, c("LPS0_vs_Ctrl0", "LPS3_vs_Ctrl3"), "PBMC_3mo")
+
+# Merge all
+merged = Reduce(function(x, y) merge(x, y, by = "gene_name", all = TRUE),
+                 list(csf_delta_3, csf_delta_12, pbmc_delta_3, pbmc_delta_12))
+setnames(merged, c("gene_name", "delta_CSF_3mo", "delta_CSF_12mo", "delta_PBMC_3mo", "delta_PBMC_12mo"))
+
+# Prepare plot data
+plot_dt = na.omit(merged[, .(gene_name, delta_CSF_12mo, delta_PBMC_12mo)])
+plot_dt[, Color := "black"]
+plot_dt[abs(delta_CSF_12mo) >= delta_cut | abs(delta_PBMC_12mo) >= delta_cut, Color := "purple"]
+
+# Highlight genes
+highlight_genes = c("IL6", "TNF", "IL1B")
+plot_dt[, label := ifelse(gene_name %in% highlight_genes, gene_name, NA)]
+
+# Plot
+p = ggplot(plot_dt, aes(x = delta_PBMC_12mo, y = delta_CSF_12mo)) +
+  geom_point(data = plot_dt[Color == "purple"],
+             color = "#B4B3E1", fill = "#B4B3E1", alpha = 0.5, shape = 21, size = 1.7, stroke = 0.3) +
+  geom_point(data = plot_dt[!is.na(label)],
+             color = "#6A6994", fill = "#B4B3E1", shape = 21, fill = NA, size = 2, stroke = 1.4) +
+  geom_point(data = plot_dt[Color == "black"],
+             color = "black", fill = "gray70", alpha = 0.2, shape = 21, size = 1.7, stroke = 0.2) +
+  geom_text_repel(data = plot_dt[!is.na(label)],
+                  aes(label = label),
+                  color = "black", size = 5, fontface = "bold",
+                  box.padding = 0.5, segment.color = "grey50") +
+  geom_hline(yintercept = 0, color = "black", linewidth = 0.5) +
+  geom_vline(xintercept = 0, color = "black", linewidth = 0.5) +
+  geom_hline(yintercept = c(-delta_cut, delta_cut), color = "gray40", linetype = "dashed", linewidth = 0.4) +
+  geom_vline(xintercept = c(-delta_cut, delta_cut), color = "gray40", linetype = "dashed", linewidth = 0.4) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray30", linewidth = 0.5) +
+  labs(
+    x = expression(Delta~log[2]*"FC (PBMC)"),
+    y = expression(Delta~log[2]*"FC (CSF)")
+  ) +
+  coord_cartesian(xlim = x_axis_limits, ylim = y_axis_limits) +
+  theme_minimal(base_size = 15) +
+  theme(
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    axis.line = element_blank(),
+    plot.background = element_rect(fill = "white", color = NA),
+    axis.ticks = element_line(color = "black", linewidth = 0.5),
+    axis.text = element_text(color = "black", size = 16),
+    axis.title = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold", vjust = -1),
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.minor.ticks.length.x = unit(0.05, "cm"),
+    axis.minor.ticks.length.y = unit(0.05, "cm")
+  ) +
+  scale_y_continuous(
+    breaks = c(-4, -2, 0, 2, 4, 6),
+    limits = c(-4, 6),
+    minor_breaks = seq(-4, 8, by = 0.2),
+    guide = guide_axis(minor.ticks = TRUE)
+  ) +
+  scale_x_continuous(
+    breaks = c(-4, -2, 0, 2, 4, 6),
+    limits = c(-4, 6),
+    minor_breaks = seq(-6, 8, by = 0.2),
+    guide = guide_axis(minor.ticks = TRUE)
+  )
+
+# Save outputs
+ggsave("../outputs/lps12_delta_pbmc_vs_csf_subfigure.tiff", p, width = 3.5, height = 3.5, dpi = 600)
+```
+
+## Distribution of Deltas
+
+```{r}
+# melt for plotting
+plot_dt_lps = data.table::melt(
+  merged,
+  id.vars = "gene_name",
+  variable.name = "Condition",
+  value.name = "delta"
+)
+
+# Extract Stimulus, Compartment, and Time
+plot_dt_lps[, c("Var", "Compartment", "Timepoint") := tstrsplit(Condition, "_", fixed = TRUE)]
+plot_dt_lps[, Timepoint := gsub("mo", "", Timepoint)] 
+
+# Convert to plotting format
+plot_dt_lps[, Timepoint := factor(Timepoint, levels = c("3", "12"), labels = c("3mo", "12mo"))]
+plot_dt_lps[, Tissue := factor(Compartment, levels = c("CSF", "PBMC"))]
+plot_dt_lps[, treatment := "LPS"]
+
+rects_lps = data.frame(
+  Tissue = c("CSF", "PBMC", "CSF", "PBMC"),
+  xmin = c(-Inf, 1.0, 1.5, 2.0),  # continuous blocks
+  xmax = c(1.0, 1.5, 2.0, Inf),
+  ymin = -Inf,
+  ymax = Inf,
+  treatment = "LPS"
+)
+
+p_lps = ggplot(plot_dt_lps, aes(x = Timepoint, y = delta, fill = Tissue)) +
+  geom_rect(
+    data = rects_lps,
+    aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = Tissue),
+    inherit.aes = FALSE,
+    alpha = 0.2  
+  ) +
+  geom_violin(width = 0.8, scale = "width", alpha = 0.7, color = "black", trim = TRUE,
+              position = position_dodge(width = 1)) +
+  scale_fill_manual(values = c("CSF" = "#6A6994", "PBMC" = "#D9A273")) +
+  labs(
+    x = NULL,
+    y = expression(Delta~log[2]*"FC")
+  ) +
+  theme_minimal(base_size = 30) +
+  theme(
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    axis.line = element_blank(),
+    plot.background = element_rect(fill = "white", color = NA),
+    axis.ticks = element_line(color = "black", linewidth = 0.5),
+    axis.text = element_text(color = "black", size = 30),
+    axis.title.y = element_text(size = 30, vjust = -1.5),
+    axis.title.x = element_text(size = 30),
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.minor.ticks.length.x = unit(0.05, "cm"),
+    axis.minor.ticks.length.y = unit(0.05, "cm"),
+    legend.position = "none",
+    legend.title = element_blank()
+  ) +
+  scale_y_continuous(
+    breaks = c(-4, -2, 0, 2, 4, 6),
+    limits = x_axis_limits,
+    minor_breaks = seq(-4, 6, by = 0.2),
+    guide = guide_axis(minor.ticks = TRUE)
+  )
+ggsave("../outputs/lps12_delta_pbmc_vs_csf_subfigure_violin.tiff", p_lps, width = 4, height = 3.5, dpi = 600)
+```
+
+
+
+# Monocytes - BCG - Delta - PBMC vs CSF
+
+## 2D volcano plot
+
+```{r}
+delta_cut = 0.5
+# Load data
+csf_dt = fread("../source_data/DE_all_genes_stim_CSF.csv")
+pbmc_dt = fread("../source_data/DE_all_genes_PBMC.csv")
+
+x_axis_limits = c(-4, 6)
+y_axis_limits = c(-2.5, 6)
+
+# Filter
+csf_dt = csf_dt[celltype == "Mono" & pvalue > 0]
+pbmc_dt = pbmc_dt[celltype == "Mono" & pvalue > 0]
+
+# Function to get deltas
+get_deltas = function(dt, timepoints, label) {
+  ddt = dcast(
+    dt[comparison %in% timepoints],
+    gene_name ~ comparison,
+    value.var = "log2FoldChange"
+  )[, paste0("delta_", label) := get(timepoints[2]) - get(timepoints[1])][,
+    c("gene_name", paste0("delta_", label)), with = F]
+  return(ddt)
+}
+
+# Get deltas
+csf_delta_12 = get_deltas(csf_dt, c("BCG0_vs_Ctrl0", "BCG12_vs_Ctrl12"), "CSF_12mo")
+pbmc_delta_12 = get_deltas(pbmc_dt, c("BCG0_vs_Ctrl0", "BCG12_vs_Ctrl12"), "PBMC_12mo")
+csf_delta_3 = get_deltas(csf_dt, c("BCG0_vs_Ctrl0", "BCG3_vs_Ctrl3"), "CSF_3mo")
+pbmc_delta_3 = get_deltas(pbmc_dt, c("BCG0_vs_Ctrl0", "BCG3_vs_Ctrl3"), "PBMC_3mo")
+
+# Merge
+merged = Reduce(function(x, y) merge(x, y, by = "gene_name", all = TRUE),
+                 list(csf_delta_3, csf_delta_12, pbmc_delta_3, pbmc_delta_12))
+
+# Prepare plotting data
+plot_dt = na.omit(merged[, .(gene_name, delta_CSF_12mo, delta_PBMC_12mo)])
+plot_dt[, Color := "black"]
+plot_dt[abs(delta_CSF_12mo) >= delta_cut, Color := "blue"]
+plot_dt[abs(delta_PBMC_12mo) >= delta_cut & abs(delta_CSF_12mo) < delta_cut, Color := "purple"]
+plot_dt[abs(delta_PBMC_12mo) >= delta_cut & abs(delta_CSF_12mo) >= delta_cut, Color := "red"]
+
+highlight_genes = c("IL6")
+
+plot_dt[, highlight := ifelse(gene_name %in% highlight_genes, TRUE, FALSE)]
+
+
+# Plot
+p = ggplot(plot_dt, aes(x = delta_PBMC_12mo, y = delta_CSF_12mo)) +
+  geom_point(data = plot_dt[Color == "black"],
+             aes(color = Color), fill = "gray70", alpha = 0.2, size = 1.8, shape = 21, stroke = 0.2) +
+  geom_point(data = plot_dt[Color != "black"],
+             color = "#B4B3E1", fill = "#B4B3E1", shape = 21, fill = NA, size = 1.8, stroke = 0.3, alpha = 0.6) +
+  geom_point(data = plot_dt[highlight == TRUE],
+             color = "#6A6994", fill = "#B4B3E1", shape = 21, fill = NA, size = 1.8, stroke = 1.2) +
+  
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray30", linewidth = 0.5) +
+  geom_text(data = plot_dt[highlight == TRUE],
+          aes(
+            x = ifelse(gene_name == "IL6", delta_PBMC_12mo - 0.3, delta_PBMC_12mo),
+            label = gene_name
+          ),
+          y = plot_dt[highlight == TRUE]$delta_CSF_12mo,
+          hjust = 0, vjust = -0.8,
+          size = 5, fontface = "bold", color = "black") +
+  scale_color_identity() +
+  geom_hline(yintercept = 0, color = "black", linewidth = 0.6) +
+  geom_vline(xintercept = 0, color = "black", linewidth = 0.6) +
+  geom_hline(yintercept = c(-delta_cut, delta_cut), color = "gray", linetype = "dashed", linewidth = 0.5) +
+  geom_vline(xintercept = c(-delta_cut, delta_cut), color = "gray", linetype = "dashed", linewidth = 0.5) +
+  coord_cartesian(xlim = x_axis_limits, ylim = y_axis_limits) +
+  labs(
+    x = expression(Delta~log[2]*"FC (PBMC)"),
+    y = expression(Delta~log[2]*"FC (CSF)")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    axis.line = element_blank(),
+    plot.background = element_rect(fill = "white", color = NA),
+    axis.ticks = element_line(color = "black", linewidth = 0.5),
+    axis.text.x = element_text(color = "black", size = 14),
+    axis.text.y = element_text(color = "black", size = 14),
+    axis.title.x = element_text(face = "bold", size = 16),
+    axis.title.y = element_text(face = "bold", size = 16, vjust = -0.5),
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.minor.ticks.length.x = unit(0.05, "cm"),
+    axis.minor.ticks.length.y = unit(0.05, "cm")
+  ) +
+  scale_y_continuous(
+    breaks = c(-4, -2, 0, 2, 4, 6, 8),
+    limits = y_axis_limits,
+    minor_breaks = seq(-4, 8, by = 0.2),
+    labels = function(x) sprintf("%.0f", x),
+    guide = guide_axis(minor.ticks = TRUE)
+  ) +
+  scale_x_continuous(
+    breaks = c(-4, -2, 0, 2, 4, 6),
+    limits = x_axis_limits,
+    minor_breaks = seq(-4, 8, by = 0.2),
+    guide = guide_axis(minor.ticks = TRUE)
+  )
+
+# Save
+ggsave("../outputs/hkbcg12_delta_pbmc_vs_csf_subfigure_large.tiff", p, width = 3.5, height = 3.5, dpi = 600)
+```
+
+### Zoom in 
+
+```{r}
+delta_cut = 0.5
+# Load data
+csf_dt = fread("../source_data/DE_all_genes_stim_CSF.csv")
+pbmc_dt = fread("../source_data/DE_all_genes_PBMC.csv")
+
+x_axis_limits = c(-4.07, 6)
+y_axis_limits = c(-0.009, 0.016)
+
+# Filter
+csf_dt = csf_dt[celltype == "Mono" & pvalue > 0]
+pbmc_dt = pbmc_dt[celltype == "Mono" & pvalue > 0]
+
+# Function to get deltas
+get_deltas = function(dt, timepoints, label) {
+  ddt = dcast(
+    dt[comparison %in% timepoints],
+    gene_name ~ comparison,
+    value.var = "log2FoldChange"
+  )[, paste0("delta_", label) := get(timepoints[2]) - get(timepoints[1])][,
+    c("gene_name", paste0("delta_", label)), with = F]
+  return(ddt)
+}
+
+# Get deltas
+csf_delta_12 = get_deltas(csf_dt, c("BCG0_vs_Ctrl0", "BCG12_vs_Ctrl12"), "CSF_12mo")
+pbmc_delta_12 = get_deltas(pbmc_dt, c("BCG0_vs_Ctrl0", "BCG12_vs_Ctrl12"), "PBMC_12mo")
+csf_delta_3 = get_deltas(csf_dt, c("BCG0_vs_Ctrl0", "BCG3_vs_Ctrl3"), "CSF_3mo")
+pbmc_delta_3 = get_deltas(pbmc_dt, c("BCG0_vs_Ctrl0", "BCG3_vs_Ctrl3"), "PBMC_3mo")
+
+# Merge
+merged = Reduce(function(x, y) merge(x, y, by = "gene_name", all = TRUE),
+                 list(csf_delta_3, csf_delta_12, pbmc_delta_3, pbmc_delta_12))
+
+# Prepare plotting data
+plot_dt = na.omit(merged[, .(gene_name, delta_CSF_12mo, delta_PBMC_12mo)])
+plot_dt[, Color := "black"]
+plot_dt[abs(delta_CSF_12mo) >= delta_cut, Color := "blue"]
+plot_dt[abs(delta_PBMC_12mo) >= delta_cut & abs(delta_CSF_12mo) < delta_cut, Color := "purple"]
+plot_dt[abs(delta_PBMC_12mo) >= delta_cut & abs(delta_CSF_12mo) >= delta_cut, Color := "red"]
+
+highlight_genes = c("IL6")
+
+plot_dt[, highlight := ifelse(gene_name %in% highlight_genes, TRUE, FALSE)]
+
+
+# Plot
+p = ggplot(plot_dt, aes(x = delta_PBMC_12mo, y = delta_CSF_12mo * 1000)) +
+  geom_point(data = plot_dt[Color == "black"],
+             aes(color = Color), fill = "gray70", alpha = 0.2, size = 1.8, shape = 21, stroke = 0.2) +
+  geom_point(data = plot_dt[Color != "black"],
+             color = "#B4B3E1", fill = "#B4B3E1", shape = 21, fill = NA, size = 1.8, stroke = 0.3, alpha = 0.6) +
+  geom_point(data = plot_dt[highlight == TRUE],
+             color = "#6A6994", fill = "#B4B3E1", shape = 21, fill = NA, size = 1.8, stroke = 1.2) +
+  
+  geom_abline(intercept = 0, slope = 1/1000, linetype = "dashed", color = "gray30", linewidth = 0.8) +
+  geom_text(data = plot_dt[highlight == TRUE],
+          aes(
+            x = ifelse(gene_name == "IL6", delta_PBMC_12mo - 0.3, delta_PBMC_12mo),
+            label = gene_name
+          ),
+          y = plot_dt[highlight == TRUE]$delta_CSF_12mo * 1000,
+          hjust = 0, vjust = -0.8,
+          size = 5, fontface = "bold", color = "black") +
+  scale_color_identity() +
+  geom_hline(yintercept = 0, color = "black", linewidth = 0.6) +
+  geom_vline(xintercept = 0, color = "black", linewidth = 0.6) +
+  geom_hline(yintercept = c(-delta_cut*1000, delta_cut*1000), color = "gray", linetype = "dashed", linewidth = 0.8) +
+  geom_vline(xintercept = c(-delta_cut, delta_cut), color = "gray", linetype = "dashed", linewidth = 0.5) +
+  coord_cartesian(xlim = x_axis_limits, ylim = y_axis_limits * 1000) +
+  labs(
+    x = expression(Delta~log[2]*"FC (PBMC)"),
+    y = expression(Delta~log[2]*"FC (CSF ["*x*10^-3*"])")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "#EC6E66", fill = NA, linewidth = 1.6),
+    axis.line = element_blank(),
+    plot.background = element_rect(fill = "white", color = NA),
+    axis.ticks = element_line(color = "black", linewidth = 0.5),
+    axis.text.x = element_text(color = "black", size = 14),
+    axis.text.y = element_text(color = "black", size = 14),
+    axis.title.x = element_text(face = "bold", size = 16),
+    axis.title.y = element_text(face = "bold", size = 16, vjust = -0.5),
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.minor.ticks.length.x = unit(0.05, "cm"),
+    axis.minor.ticks.length.y = unit(0.05, "cm")
+  ) +
+  scale_y_continuous(
+    breaks = c(-0.005, 0, 0.005, 0.01, 0.015, 0.02) * 1000,
+    limits = y_axis_limits * 1000,
+    minor_breaks = seq(-0.009, 0.02, by = 0.001) * 1000,
+    labels = function(x) sprintf("%.0f", x),
+    guide = guide_axis(minor.ticks = TRUE)
+  ) +
+  scale_x_continuous(
+    breaks = c(-4, -2, 0, 2, 4, 6),
+    limits = x_axis_limits,
+    minor_breaks = seq(-4, 6, by = 0.2),
+    guide = guide_axis(minor.ticks = TRUE)
+  )
+
+# Save
+ggsave("../outputs/hkbcg12_delta_pbmc_vs_csf_subfigure.tiff", p, width = 3.5, height = 3.5, dpi = 600)
+```
+
+## Distribution of Deltas
+
+```{r}
+plot_dt_bcg = data.table::melt(
+  merged,
+  id.vars = "gene_name",
+  measure.vars = patterns("^delta_"),
+  variable.name = "Condition",
+  value.name = "delta"
+)
+
+# Extract Stimulus, Compartment, and Time
+plot_dt_bcg[, c("Var", "Compartment", "Timepoint") := tstrsplit(Condition, "_", fixed = TRUE)]
+plot_dt_bcg[, Timepoint := gsub("mo", "", Timepoint)]  
+
+rects_bcg = data.frame(
+  Tissue = c("CSF", "PBMC", "CSF", "PBMC"),
+  xmin = c(-Inf, 1.0, 1.5, 2.0), 
+  xmax = c(1.0, 1.5, 2.0, Inf),
+  ymin = -Inf,
+  ymax = Inf,
+  treatment = "HKBCG"
+)
+
+# Convert to plotting format
+plot_dt_bcg[, Timepoint := factor(Timepoint, levels = c("3", "12"), labels = c("3mo", "12mo"))]
+plot_dt_bcg[, Tissue := factor(Compartment, levels = c("CSF", "PBMC"))]
+plot_dt_bcg[, treatment := "HKBCG"]
+
+p_bcg = ggplot(plot_dt_bcg, aes(x = Timepoint, y = delta, fill = Tissue)) +
+  geom_rect(
+    data = rects_bcg,
+    aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = Tissue),
+    inherit.aes = FALSE,
+    alpha = 0.2  
+  ) +
+  geom_violin(width = 0.8, scale = "width", alpha = 0.7, color = "black", trim = TRUE,
+              position = position_dodge(width = 1)) +
+  scale_fill_manual(values = c("CSF" = "#6A6994", "PBMC" = "#D9A273")) +
+  labs(
+    x = NULL,
+    y = expression(Delta~log[2]*"FC")
+  ) +
+  theme_minimal(base_size = 30) +
+  theme(
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    axis.line = element_blank(),
+    plot.background = element_rect(fill = "white", color = NA),
+    axis.ticks = element_line(color = "black", linewidth = 0.5),
+    axis.text = element_text(color = "black", size = 30),
+    axis.title.y = element_text(size = 30, vjust = -1.5),
+    axis.title.x = element_text(size = 30),
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.minor.ticks.length.x = unit(0.05, "cm"),
+    axis.minor.ticks.length.y = unit(0.05, "cm"),
+    legend.position = "none",
+    legend.title = element_blank()
+  ) +
+  scale_y_continuous(
+    breaks = c(-4, -2, 0, 2, 4, 6),
+    limits = x_axis_limits,
+    minor_breaks = seq(-4, 6, by = 0.2),
+    guide = guide_axis(minor.ticks = TRUE)
+  )
+ggsave("../outputs/hkbcg12_delta_pbmc_vs_csf_subfigure_violin.png", p_bcg, width = 4.5, height = 4, dpi = 300)
+```
+
+
+```{r}
+rects = rbind(rects_lps, rects_bcg)
+plot_dt = rbind(plot_dt_bcg, plot_dt_lps)
+plot_dt[, treatment := factor(treatment, levels = c("LPS", "HKBCG"))]
+setDT(rects)
+rects[, treatment := factor(treatment, levels = c("LPS", "HKBCG"))]
+
+ggplot(plot_dt, aes(x = Timepoint, y = delta, fill = Tissue)) +
+  geom_rect(
+    data = rects,
+    aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = Tissue),
+    inherit.aes = FALSE,
+    alpha = 0.2, show.legend = T
+  ) +
+  geom_violin(width = 0.8, scale = "width", alpha = 0.7, color = "black", trim = TRUE,
+              position = position_dodge(width = 1), show.legend = F) +
+  facet_grid(treatment ~ .) +
+  scale_fill_manual(values = c("CSF" = "#6A6994", "PBMC" = "#D9A273")) +
+  labs(
+    x = NULL,
+    y = expression(Delta~log[2]*"FC")
+  ) +
+  theme_minimal(base_size = 30) +
+  theme(
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1.7),
+    axis.line = element_blank(),
+    plot.background = element_rect(fill = "white", color = NA),
+    axis.ticks = element_line(color = "black", linewidth = 0.5),
+    axis.text = element_text(color = "black", size = 30),
+    axis.title.y = element_text(size = 30, vjust = -0.5),
+    axis.title.x = element_text(size = 30),
+    axis.ticks.length = unit(0.15, "cm"),
+    axis.minor.ticks.length.x = unit(0.05, "cm"),
+    axis.minor.ticks.length.y = unit(0.05, "cm"),
+    legend.position = "top",
+    legend.title = element_blank(),
+    panel.spacing = unit(1.2, "lines")
+  ) +
+  scale_y_continuous(
+    breaks = c(-4, -2, 0, 2, 4, 6),
+    limits = x_axis_limits,
+    minor_breaks = seq(-4, 6, by = 0.2),
+    guide = guide_axis(minor.ticks = TRUE)
+  ) 
+
+ggsave("../outputs/Figure2 delta distribution.tiff", width = 6.5, height = 7.5, dpi = 300)
+```
+
+
+# Upset plot
+
+```{r}
+delta_cut = 0.5
+## BCG
+# Calculate deltas
+csf_delta_12 = get_deltas(csf_dt, c("BCG0_vs_Ctrl0", "BCG12_vs_Ctrl12"), "CSF_12mo")
+pbmc_delta_12 = get_deltas(pbmc_dt, c("BCG0_vs_Ctrl0", "BCG12_vs_Ctrl12"), "PBMC_12mo")
+csf_delta_3 = get_deltas(csf_dt, c("BCG0_vs_Ctrl0", "BCG3_vs_Ctrl3"), "CSF_3mo")
+pbmc_delta_3 = get_deltas(pbmc_dt, c("BCG0_vs_Ctrl0", "BCG3_vs_Ctrl3"), "PBMC_3mo")
+
+# Merge
+merged = Reduce(function(x, y) merge(x, y, by = "gene_name", all = TRUE),
+                 list(csf_delta_3, csf_delta_12, pbmc_delta_3, pbmc_delta_12))
+
+# Convert numeric columns to TRUE if > 0.5, else FALSE
+cols_to_check = names(merged)[sapply(merged, is.numeric)]
+merged_up = copy(merged)
+merged_up[, (cols_to_check) := lapply(.SD, function(x) x > delta_cut), .SDcols = cols_to_check]
+merged_up$Direction = "Up"
+
+merged_dn = copy(merged)
+merged_dn[, (cols_to_check) := lapply(.SD, function(x) x < -delta_cut), .SDcols = cols_to_check]
+merged_dn$Direction = "Down"
+
+merged = rbind(merged_up, merged_dn)
+colnames(merged) = gsub("delta", "BCG", colnames(merged))
+
+## LPS
+# Calculate deltas
+csf_delta_12 = get_deltas(csf_dt, c("LPS0_vs_Ctrl0", "LPS12_vs_Ctrl12"), "CSF_12mo")
+pbmc_delta_12 = get_deltas(pbmc_dt, c("LPS0_vs_Ctrl0", "LPS12_vs_Ctrl12"), "PBMC_12mo")
+csf_delta_3 = get_deltas(csf_dt, c("LPS0_vs_Ctrl0", "LPS3_vs_Ctrl3"), "CSF_3mo")
+pbmc_delta_3 = get_deltas(pbmc_dt, c("LPS0_vs_Ctrl0", "LPS3_vs_Ctrl3"), "PBMC_3mo")
+merged2 = Reduce(function(x, y) merge(x, y, by = "gene_name", all = TRUE),
+                 list(csf_delta_3, csf_delta_12, pbmc_delta_3, pbmc_delta_12))
+
+# Convert numeric columns to TRUE if > 0.5, else FALSE
+cols_to_check = names(merged2)[sapply(merged2, is.numeric)]
+merged2_up = copy(merged2)
+merged2_up[, (cols_to_check) := lapply(.SD, function(x) x > delta_cut), .SDcols = cols_to_check]
+merged2_up$Direction = "Up"
+
+merged2_dn = copy(merged2)
+merged2_dn[, (cols_to_check) := lapply(.SD, function(x) x < -delta_cut), .SDcols = cols_to_check]
+merged2_dn$Direction = "Down"
+
+merged2 = rbind(merged2_up, merged2_dn)
+colnames(merged2) = gsub("delta", "LPS", colnames(merged2))
+
+dt = merge(
+  merged, merged2, by = c("gene_name", "Direction"), all = T
+)
+dt[is.na(dt)] = FALSE
+
+cols_to_check = setdiff(names(dt), c("gene_name", "Direction"))
+# Keep rows where at least one of the columns is TRUE
+keep_rows = rowSums(dt[, ..cols_to_check]) > 0
+dt = dt[keep_rows]
+
+# Create intersection string
+cols = setdiff(names(dt), c("gene_name", "Direction"))
+dt[, intersection := apply(.SD, 1, function(x) paste0(names(x)[x], collapse = "&")), .SDcols = cols]
+
+# Get intersections with size > 50
+intersection_sizes = dt[, .N, by = .(intersection)]
+valid_intersections = intersection_sizes[N > 50, unique(intersection)]
+
+# Keep rows in valid intersections OR with forced-in sets
+dt_filtered = dt[
+  intersection %in% valid_intersections |
+  BCG_CSF_3mo == TRUE |
+  BCG_CSF_12mo == TRUE
+][, intersection := NULL]
+
+colnames(dt_filtered) = gsub("BCG", "HKBCG", colnames(dt_filtered))
+# column meta data
+col_meta = data.table(set = setdiff(names(dt_filtered), c("gene_name", "Direction")))
+col_meta[, tissue := ifelse(grepl("CSF", set), "CSF", "PBMC")]
+col_meta[, treatment := ifelse(grepl("HKBCG", set), "HKBCG", "LPS")]
+
+
+up_color = "#FFBEBB"
+down_color = "#D9EAD4"
+
+colnames(dt_filtered)[3:10] = c("3mo", "12mo", "3mo ", "12mo ", "3mo  ", "12mo  ", "3mo   ", "12mo   ")
+cols = setdiff(names(dt_filtered), c("gene_name", "Direction", "intersection"))
+col_meta[, set := cols]
+
+# Upset plot
+upset(
+    dt_filtered,
+    cols,
+    name = "Group",
+    width_ratio = 0.15,
+    height_ratio = 0.9,
+    base_annotations = list(
+        'Intersection\nSize'= intersection_size(
+            mapping = aes(fill = Direction),
+            linewidth = 0.5,
+            width = 0.7,
+            text = list( color = "black", 
+              hjust = c(0.4, -0.2, 0.4, 0.4, -0.2, -0.2, 0.4, rep(-0.2, 19)), vjust = 0.5, size = 4, angle = 90),
+            color = "black"
+        ) + 
+        scale_fill_manual(values = c("Up"= up_color, "Down" = down_color)) +
+        scale_y_continuous(breaks = seq(0, 2400, by = 800), limits = c(0, 2400)) +
+        theme(
+          panel.grid = element_blank(),
+          panel.grid.major = element_blank(),
+          legend.position = c(0.8, 0.9),
+          axis.text.y = element_text(color = "black", size = 12, hjust = 1, angle = 90),
+          axis.title.y = element_text(color = "black", size = 14, vjust = 2),
+          axis.ticks.y = element_line(color = "black")
+        ) 
+    ),
+    matrix= (
+        intersection_matrix(
+            geom=geom_point(size = 1.8) ,
+            segment=geom_segment(linewidth = 0.9) 
+        ) + 
+        scale_y_discrete(position='right')
+    ) ,
+    guides='collect',
+    set_sizes = upset_set_size(
+      geom = geom_bar(
+        aes(fill = Direction),
+        width = 0.8,
+        linewidth = 0.5,
+        color = "black"
+      ),
+      position = "left"
+    ) +
+      scale_fill_manual(
+        name = "Direction",
+        values = c("Up" = up_color, "Down" = down_color)
+      ) +
+      scale_y_reverse(breaks = c(3000, 0)) +
+      theme(
+        panel.grid = element_blank(),
+        axis.title.x = element_text(color = "black", size = 10),
+        axis.text.x = element_text(color = "black", size = 10)
+      ),
+    themes=upset_modify_themes(
+        list(
+            'intersections_matrix'= theme(
+                panel.grid = element_blank(),
+                axis.title.x = element_text(color = "black", size = 10, angle = 180),
+                axis.text.y = element_text(color = "black", size = 10),
+                panel.border = element_rect(color = "black", fill = NA, linewidth = 0.7)
+              ),
+            'overall_sizes'=theme(
+                panel.grid = element_blank(),
+                axis.title.x = element_text(color = "black", size = 10, angle = 180, vjust = -13),
+                axis.text.x = element_text(color = "black", size = 10, angle = 180, vjust = -13))
+            )
+    ),
+    stripes=upset_stripes(
+        mapping=aes(color = treatment),
+        colors=c(
+            'HKBCG'='grey93',
+            'LPS'='white'
+        ),
+        data=col_meta
+    )
+) 
+ggsave("../outputs/upsetplot_fig2_mono.tiff", width = 8, height = 4.5, dpi = 300, bg = "transparent")
+```
+
+
+

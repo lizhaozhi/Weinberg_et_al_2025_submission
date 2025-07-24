@@ -1,0 +1,498 @@
+---
+title: "Source code of Figure 2"
+output: html_document
+params:
+  fig_dir: "../figures"
+---
+
+```{r setup, include=FALSE}
+# Load required libraries
+knitr::opts_chunk$set(echo = TRUE)
+require(data.table)    
+require(tidyverse)
+require(fgsea)
+require(openxlsx)
+require(circlize)
+require(ComplexHeatmap)
+require(clusterProfiler)
+require(org.Hs.eg.db)
+require(wordcloud)
+require(tm)
+require(RColorBrewer)
+require(dplyr)
+```
+
+# Data Loading
+
+```{r}
+# Load differential expression results
+degs_csf_stim = fread("../source_data/DE_all_genes_stim_CSF.csv")
+degs_pbmc_stim = fread("../source_data/DE_all_genes_PBMC.csv")
+degs_csf_stim[, Direction := ifelse(padj > 0.05 | is.na(padj), "NS", ifelse(log2FoldChange < 0, "Down", "Up"))]
+degs_pbmc_stim[, Direction := ifelse(padj > 0.05 | is.na(padj), "NS", ifelse(log2FoldChange < 0, "Down", "Up"))]
+```
+
+# Heatmap of delta log2FC
+
+## function for heatmap
+
+```{r}
+delta_heatmap = function(
+  dt, sel_celltype, sel_treatment, sel_set, sel_var = "log2FoldChange", 
+  width = 10, height = 2.8, delta_cut = 0.25
+){
+  # get treatment vs ctrl comparisons at time 0, 3 and 12
+  sel_comparisons = paste0(sel_treatment, c(0, 3, 12), "_vs_Ctrl", c(0, 3, 12))
+  dt = dt[comparison %in% sel_comparisons & celltype == sel_celltype & !is.na(padj), ]
+  dt[, time := ifelse(grepl("12", comparison), 12, ifelse(grepl("3", comparison), 3, 0))]
+  
+  dt = dcast(
+    dt, 
+    gene_name ~ comparison, 
+    value.var = sel_var, 
+    fill = FALSE
+  )
+  # Calculate delta
+  dt[, delta_3 := get(paste0(sel_treatment, 3, "_vs_Ctrl", 3)) - get(paste0(sel_treatment, 0, "_vs_Ctrl", 0))]
+  dt[, delta_12 := get(paste0(sel_treatment, 12, "_vs_Ctrl", 12)) - get(paste0(sel_treatment, 0, "_vs_Ctrl", 0))]
+  
+  # Up
+  dt[delta_3 > delta_cut & delta_12 > delta_cut, Change := "Sustained Up"]
+  dt[delta_3 < delta_cut & delta_3 > -delta_cut & delta_12 > delta_cut, Change := "Late Up"]
+  dt[delta_3 > delta_cut & delta_12 > -delta_cut & delta_12 < delta_cut, Change := "Early Up"]
+  # Down
+  dt[delta_3 < -delta_cut & delta_12 < -delta_cut, Change := "Sustained Down"]
+  dt[delta_3 < -delta_cut & delta_12 > -delta_cut & delta_12 < delta_cut, Change := "Early Down"]
+  dt[delta_3 > -delta_cut & delta_3 < delta_cut & delta_12 < -delta_cut, Change := "Late Down"]
+  # None
+  dt[delta_3 > -delta_cut & delta_3 < delta_cut & delta_12 > -delta_cut & delta_12 < delta_cut, Change := "None"]
+  
+  # Opposite
+  dt[delta_3 < -delta_cut & delta_12 > delta_cut, Change := "Late Up Early Down"]
+  dt[delta_3 > delta_cut & delta_12 < -delta_cut, Change := "Early Up Late Down"]
+  
+  dt_raw = dt
+  
+  dt_raw[, Celltype := sel_celltype]
+  dt_raw[, Set := sel_set]
+  
+  # Select genes that pass the delta theresholds
+  sel_genes = dt[Change != "None", gene_name]
+  if(length(sel_genes) < 2){
+    return(dt_raw)
+  }
+  dt = as.data.frame(dt[sel_genes, ]) %>%
+    column_to_rownames("gene_name") 
+  clusters = data.table(
+    gene_name = rownames(dt),
+    cluster = dt$Change
+  )
+  dt = dt[, c(paste0(sel_treatment, c(0, 3, 12), "_vs_Ctrl", c(0, 3, 12)), paste0("delta_", c(3, 12)))]
+  colnames(dt) = ifelse(grepl("12", colnames(dt)), "12", ifelse(grepl("3", colnames(dt)), "3", "0"))
+  dt = as.matrix(dt)
+  
+  # Mark genes of interest
+  gene_marks = c("IL1B", "TNF", "IL6", "IL10")
+  row_idx = which(rownames(dt) %in% gene_marks)
+  row_anno = rowAnnotation(
+    mark_genes = anno_mark(
+      at = row_idx,
+      labels = rownames(dt)[row_idx],
+      side = "right",
+      padding = 0.25,
+      link_width = unit(1, "mm"),
+      labels_gp = gpar(fontsize = 9)
+    )
+  )
+  
+  color_f1 = colorRamp2(c(-2.5, 0, 2.5), c("#5B99C2", "#ffedda", "#F95454"))
+  
+  cluster_levels = c(
+    "Early Up", "Late Up", "Sustained Up",
+    "Early Down", "Late Down", "Sustained Down",
+    "Early Up Late Down", "Late Up Early Down"
+  )
+  clusters$cluster = factor(clusters$cluster, levels = cluster_levels)
+  
+  cluster_colors = structure(
+    c("#FFC6C6", "#CCA9D9", "#6B2391",
+      "#e1e7c5", "#b8d2a0", "#a8c193",
+      "#fde7b3", "#ffc19b"),
+    names = cluster_levels
+  )
+  
+  # Disable default annotation legend
+  row_anno_cluster = rowAnnotation(
+    Cluster = clusters$cluster,
+    col = list(Cluster = cluster_colors),
+    show_annotation_name = FALSE,
+    show_legend = FALSE,
+    width = unit(0.5, "mm")
+  )
+  
+  # Create custom legend with larger spacing
+  cluster_legend = Legend(
+    title = "Cluster",
+    at = names(cluster_colors),
+    legend_gp = gpar(fill = cluster_colors),
+    labels_gp = gpar(fontsize = 10),
+    title_gp = gpar(fontsize = 12),
+    grid_height = unit(6, "mm") 
+  )
+  
+  column_split_vec = factor(
+    c(rep("log2FC", 3), rep("delta", 2)),
+    levels = c("log2FC", "delta")
+  )
+  exp_label = paste0("\n", sel_treatment," vs Ctrl")
+
+  # Heatmap
+  fig_file = paste0("../outputs/deltaHeatmap_", sel_set, "_", sel_celltype, "_", sel_treatment, ".png")
+  png(fig_file,width=width,height=height,units="in",res=300, bg = "transparent")
+  p = Heatmap(
+    as.matrix(dt), 
+    name = "expr_name", 
+    show_row_names = F, 
+    cluster_rows = TRUE,
+    col = color_f1,
+    border_gp = gpar(lwd = 0.9),
+    cluster_columns = FALSE,
+    show_heatmap_legend = T,
+    row_names_side = "left",
+    row_dend_side = "right",
+    column_names_rot = 0, 
+    cluster_row_slices = FALSE,
+    width = 4*unit(10.6, "mm"),
+    show_row_dend = FALSE, 
+    column_split = column_split_vec,
+    heatmap_legend_param = list(
+      title = expression(Delta~"or"~log[2]*FC),
+      title_gp = gpar(fontsize = 12, fontface = "bold"),
+      labels_gp = gpar(fontsize = 10)
+    ),
+    row_title = NULL,
+    column_title = c(
+      expression(log[2]*"FC"), 
+      expression(Delta~log[2]*"FC")
+    ),
+    row_split = clusters$cluster,
+    column_names_centered = TRUE,
+    left_annotation = row_anno,
+    right_annotation = row_anno_cluster
+  ) 
+  draw(
+    p,
+    heatmap_legend_side = "right",
+    annotation_legend_side = "right",
+    annotation_legend_list = list(cluster_legend),
+    merge_legend = TRUE
+  )
+  dev.off()
+  return(dt_raw)
+}
+```
+
+
+## Generate figures
+
+```{r}
+# Generate figures
+delta_cut = 0.5
+## LPS
+sel_treatment = "LPS"
+lps_dt = rbind(
+  ### Monocytes - PBMC
+  delta_heatmap(
+    dt = degs_pbmc_stim, 
+    sel_celltype = "Mono", 
+    sel_treatment = sel_treatment, 
+    sel_set = "pbmcstim",
+    width = 10, height = 4.8,
+    delta_cut = delta_cut
+  ),
+  ### Monocytes - CSF
+  delta_heatmap(
+    dt = degs_csf_stim, 
+    sel_celltype = "Mono", 
+    sel_treatment = sel_treatment, 
+    sel_set = "csfstim",
+    width = 10, height = 4.8,
+    delta_cut = delta_cut
+  ),
+  ### CD4 - PBMC
+  delta_heatmap(
+    dt = degs_pbmc_stim, 
+    sel_celltype = "CD4 T", 
+    sel_treatment = sel_treatment, 
+    sel_set = "pbmcstim",
+    width = 10, height = 4.8,
+    delta_cut = delta_cut
+  ),
+  ### CD4 - CSF
+  delta_heatmap(
+    dt = degs_csf_stim,
+    sel_celltype = "CD4 T",
+    sel_treatment = sel_treatment,
+    sel_set = "csfstim",
+    width = 10, height = 4.8,
+    delta_cut = delta_cut
+  ),
+  delta_heatmap(
+    dt = degs_pbmc_stim, 
+    sel_celltype = "CD8 T", 
+    sel_treatment = sel_treatment, 
+    sel_set = "pbmcstim",
+    width = 10, height = 4.8,
+    delta_cut = delta_cut
+  ),
+  delta_heatmap(
+    dt = degs_csf_stim,
+    sel_celltype = "CD8 T",
+    sel_treatment = sel_treatment,
+    sel_set = "csfstim",
+    width = 10, height = 4.8,
+    delta_cut = delta_cut
+  ))
+
+
+
+## BCG
+sel_treatment = "BCG"
+bcg_dt = rbind(
+  ### Monocytes - PBMC
+  delta_heatmap(
+    dt = degs_pbmc_stim, 
+    sel_celltype = "Mono", 
+    sel_treatment = sel_treatment, 
+    sel_set = "pbmcstim",
+    width = 10, height = 4.8,
+    delta_cut = delta_cut
+  ),
+  ### Monocytes - CSF
+  delta_heatmap(
+    dt = degs_csf_stim, 
+    sel_celltype = "Mono", 
+    sel_treatment = sel_treatment, 
+    sel_set = "csfstim",
+    width = 10, height = 4.8,
+    delta_cut = delta_cut
+  ),
+  ### CD4 - PBMC
+  delta_heatmap(
+    dt = degs_pbmc_stim, 
+    sel_celltype = "CD4 T", 
+    sel_treatment = sel_treatment, 
+    sel_set = "pbmcstim",
+    width = 10, height = 4.8,
+    delta_cut = delta_cut
+  ),
+  ### CD4 - CSF
+  delta_heatmap(
+    dt = degs_csf_stim,
+    sel_celltype = "CD4 T",
+    sel_treatment = sel_treatment,
+    sel_set = "csfstim",
+    width = 10, height = 4.8,
+    delta_cut = delta_cut
+  ),
+  delta_heatmap(
+    dt = degs_pbmc_stim, 
+    sel_celltype = "CD8 T", 
+    sel_treatment = sel_treatment, 
+    sel_set = "pbmcstim",
+    width = 10, height = 4.8,
+    delta_cut = delta_cut
+  ),
+  delta_heatmap(
+    dt = degs_csf_stim,
+    sel_celltype = "CD8 T",
+    sel_treatment = sel_treatment,
+    sel_set = "csfstim",
+    width = 10, height = 4.8,
+    delta_cut = delta_cut
+  ))
+
+fwrite(lps_dt, "/Users/zl643/Downloads/AD_analysis_RJ/Zhaozhi/Mannuscript/Trained\ Immunity\ delta\ heatmaps/LPS_signatures.csv")
+fwrite(bcg_dt, "/Users/zl643/Downloads/AD_analysis_RJ/Zhaozhi/Mannuscript/Trained\ Immunity\ delta\ heatmaps/BCG_signatures.csv")
+```
+
+
+
+## Save tables
+
+```{r}
+wb_path = "../outputs/Figure2_signatures.xlsx"
+wb = createWorkbook()
+
+add_new_sheet = function(wb, sheet_name, dt) {
+  if (sheet_name %in% names(wb)) {
+    removeWorksheet(wb, sheet_name)
+  }
+  addWorksheet(wb, sheet_name)
+  writeData(wb, sheet = sheet_name, x = dt)
+}
+
+
+lps_dts = split(lps_dt[, c("gene_name", "LPS0_vs_Ctrl0", "LPS3_vs_Ctrl3", "LPS12_vs_Ctrl12", "delta_3", "delta_12", "Change", "Celltype", "Set"), with = F], lps_dt$Set)
+lapply(names(lps_dts), function(set){
+  add_new_sheet(wb, paste0("LPS_", set), lps_dts[[set]])
+})
+
+bcg_dts = split(bcg_dt[, c("gene_name", "BCG0_vs_Ctrl0", "BCG3_vs_Ctrl3", "BCG12_vs_Ctrl12", "delta_3", "delta_12", "Change", "Celltype", "Set"), with = F], bcg_dt$Set)
+lapply(names(lps_dts), function(set){
+  add_new_sheet(wb, paste0("BCG_", set), bcg_dts[[set]])
+})
+
+saveWorkbook(wb, wb_path, overwrite = TRUE)
+```
+
+
+# Word clouds
+
+
+```{r}
+generate_wordcloud = function(
+  sel_treatment, sel_database = "GO", sel_celltype = "Mono"
+){
+  if(sel_treatment == "BCG"){
+    gene_dt = bcg_dt[Celltype == sel_celltype, ]
+  }else if(sel_treatment == "LPS"){
+    gene_dt = lps_dt[Celltype == sel_celltype, ]
+  }
+  gene_dt = gene_dt[gene_dt$Change != "None", ]
+  gene_dt[, signature := ifelse(Set == "pbmcstim", "PBMC", "CSF")]
+  gene_dt[, signature := paste(signature, Change)]
+  
+  gene_groups = split(gene_dt$gene_name, gene_dt$signature)
+  
+  immune_keywords <- c("immune", "immun","macrophage", "inflamm", "cytokine", "toll", "interferon", 
+                       "antigen", "leukocyte", "trained", "innate", "adaptive", "infection")
+  
+  word_clouds = lapply(setNames(names(gene_groups),names(gene_groups)), function(group){
+    message(group)
+    genes = gene_groups[[group]]
+    
+    # Convert SYMBOL → ENTREZ
+    eg = bitr(genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+    if (is.null(eg) || nrow(eg) == 0) next
+    
+    # GO enrichment
+    if(sel_database == "GO"){
+        enrich = enrichGO(gene = eg$ENTREZID,
+                       OrgDb = org.Hs.eg.db,
+                       ont = "BP",
+                       readable = TRUE,
+                       pvalueCutoff = 0.05,
+                       qvalueCutoff = 0.2)
+    }else{
+      # To use REACTOME
+      enrich = ReactomePA::enrichPathway(
+        gene = eg$ENTREZID,
+        pvalueCutoff = 0.05,
+        readable=T
+      )
+    }
+    
+    if (is.null(enrich) || nrow(enrich@result) == 0) {
+      return(list(enrich = NULL, word_freq = NULL, p = NULL))
+    }
+  
+    # Extract and split descriptions
+    enrich_dt = as.data.table(enrich@result[enrich@result$p.adjust < 0.05 & enrich@result$qvalue < 0.2, ])
+    terms = enrich_dt$Description
+    if (is.null(terms) || length(terms) == 0) return(list(enrich = NULL, word_freq = NULL, p = NULL))
+    
+    terms = gsub("regulation of ", "", terms)
+    words = unlist(strsplit(tolower(terms), "[ ,;\\(\\)/]+"))
+    words = words[!words %in% stopwords("en")]
+    words = words[nchar(words) > 2]
+    
+    remove_paterm = c("signaling", "cycle", "for", "disease", "regulation", "cell", "process", "response", "via", "hair", "cell", "pathway", "positive", "negative", "type", "cellular", "receptor", "cells")
+    words = words[!words %in% remove_paterm]
+    if (length(words) == 0) return(list(enrich = NULL, word_freq = NULL, p = NULL))
+  
+    # Calculate word importance based on avg -log10(p.adjust) of top 3 pathways containing the word
+    enrich_dt$log10p = -log10(enrich_dt$p.adjust)
+    word_list = unique(words)
+  
+    word_stats = lapply(word_list, function(w) {
+      match_rows = grep(w, tolower(enrich_dt$Description))
+      if (length(match_rows) == 0) return(NULL)
+    
+      top_pvals = head(sort(enrich_dt$log10p[match_rows], decreasing = TRUE), 3)
+      avg_log10p = mean(top_pvals)
+      matched_paths = enrich_dt$Description[match_rows]
+      data.frame(word = w, score = avg_log10p, pathway = paste(unique(matched_paths), collapse = "; "))
+    })
+    
+    word_freq <- do.call(rbind, word_stats)
+    if (is.null(word_freq) || nrow(word_freq) == 0) return(list(enrich = NULL, word_freq = NULL, p = NULL))
+    
+    word_freq$color <- ifelse(
+      grepl(paste(immune_keywords, collapse = "|"), word_freq$word, ignore.case = TRUE),
+      "red", "black"
+    )
+    word_freq$group = group 
+  
+    word_freq$color <- ifelse(
+      grepl(paste(immune_keywords, collapse = "|"), word_freq$word, ignore.case = TRUE),
+      "red", "black"
+    )
+    word_freq$group = group
+    
+    enrich_dt_all = enrich@result
+    enrich_dt_all$group = group
+  
+    return(list(enrich = enrich_dt_all, word_freq = word_freq))
+  })
+  return(word_clouds)
+}
+
+
+# LPS
+## word freq
+wb_path = "../outputs/Figure2_LPS_wordfreq.xlsx"
+wb = createWorkbook()
+word_clouds_lps = generate_wordcloud(
+  sel_treatment = "LPS", sel_database = "GO", sel_celltype = "Mono"
+)
+word_clouds_lps_freq = Filter(Negate(is.null), lapply(word_clouds_lps, function(x) x$word_freq))
+lapply(names(word_clouds_lps_freq), function(set){
+  add_new_sheet(wb, set, word_clouds_lps_freq[[set]])
+})
+saveWorkbook(wb, wb_path, overwrite = TRUE)
+
+## enrichment
+wb_path = "../outputs/Figure2_LPS_GOBP_enrichment.xlsx"
+wb = createWorkbook()
+word_clouds_lps_enrich = Filter(Negate(is.null), lapply(word_clouds_lps, function(x) x$enrich))
+lapply(names(word_clouds_lps_enrich), function(set){
+  add_new_sheet(wb, set, word_clouds_lps_enrich[[set]])
+})
+saveWorkbook(wb, wb_path, overwrite = TRUE)
+
+
+# BCG
+## word freq
+wb_path = "../outputs/Figure2_BCG_wordfreq.xlsx"
+wb = createWorkbook()
+word_clouds_bcg = generate_wordcloud(
+  sel_treatment = "BCG", sel_database = "GO", sel_celltype = "Mono"
+)
+word_clouds_bcg_freq = Filter(Negate(is.null), lapply(word_clouds_bcg, function(x) x$word_freq))
+lapply(names(word_clouds_bcg_freq), function(set){
+  add_new_sheet(wb, set, word_clouds_bcg_freq[[set]])
+})
+saveWorkbook(wb, wb_path, overwrite = TRUE)
+
+## enrichment
+wb_path = "../outputs/Figure2_BCG_GOBP_enrichment.xlsx"
+wb = createWorkbook()
+word_clouds_bcg_enrich = Filter(Negate(is.null), lapply(word_clouds_bcg, function(x) x$enrich))
+lapply(names(word_clouds_bcg_enrich), function(set){
+  add_new_sheet(wb, set, word_clouds_bcg_enrich[[set]])
+})
+saveWorkbook(wb, wb_path, overwrite = TRUE)
+```
+
+
